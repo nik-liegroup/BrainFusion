@@ -1,6 +1,7 @@
 # Additional
 building/*
 */prelim_code/
+*/correlation/
 */.idea/
 .bash_history/
 .ssh/*

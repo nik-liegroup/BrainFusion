@@ -4,7 +4,6 @@ from scipy.interpolate import interp1d
 
 
 def extract_and_interpolate_contours(masks, num_points=1000):
-    """Extract and interpolate contours from binary masks."""
     contours = []
     for mask in masks:
         contour = extract_contours(mask)
@@ -14,7 +13,6 @@ def extract_and_interpolate_contours(masks, num_points=1000):
 
 
 def extract_contours(mask):
-    """Extract contours from a binary mask."""
     # Ensure mask is in the correct format (uint8)
     mask = (mask > 0).astype(np.uint8)
 
@@ -36,7 +34,6 @@ def extract_contours(mask):
 
 
 def interpolate_contour(contour, num_points):
-    """Interpolate a contour to have a fixed number of points."""
     dists = np.sqrt(np.sum(np.diff(contour, axis=0) ** 2, axis=1))
     cumulative_dists = np.concatenate(([0], np.cumsum(dists)))
     interp_x = interp1d(cumulative_dists, contour[:, 1], kind='linear')
@@ -45,19 +42,24 @@ def interpolate_contour(contour, num_points):
     return np.vstack((interp_y(new_dists), interp_x(new_dists))).T
 
 
-def match_contours(contours):
-    """Match contours to the template using ellipse fitting."""
-    template_contour = contours[0]
-    matched_contours = [template_contour]  # Keep template as the first contour
-    for contour in contours[1:]:
-        shifted_contour = shift_contour(contour, template_contour)  # ToDO: Sometimes makes trafo matrix singular
+def match_contours(contours, template_index):
+    assert 0 <= template_index < len(contours), print("Contour template index out of range!")
+    template_contour = contours[template_index]
+    matched_contours = []  # Keep template as the first contour
+    for i, contour in enumerate(contours):
+        if i == template_index:
+            matched_contours.append(template_contour)
+            continue
+
+        # Shift and match contours
+        shifted_contour = shift_contour(contour, template_contour)
         matched_contour, _, _, _ = match_contour_with_ellipse(shifted_contour, template_contour)
+
         matched_contours.append(matched_contour)
     return matched_contours, template_contour
 
 
 def shift_contour(contour, reference_contour):
-    """Shift contour so that its starting point is closest to the reference contour."""
     # Calculate the Euclidean distance between the starting point of reference_contour and all points in contour
     distances = np.linalg.norm(contour - reference_contour[0], axis=1)
 
@@ -71,7 +73,6 @@ def shift_contour(contour, reference_contour):
 
 
 def match_contour_with_ellipse(A, B):
-    """Match contour A to contour B using ellipse fitting and rotation."""
     ellipse_A = fit_ellipse(A)
     ellipse_B = fit_ellipse(B)
     if ellipse_A is None or ellipse_B is None:
@@ -91,33 +92,29 @@ def match_contour_with_ellipse(A, B):
 
 
 def fit_ellipse(contour):
-    """Fit an ellipse to the given contour and return its parameters."""
     if len(contour) < 5:
         return None
     return cv2.fitEllipse(contour.astype(np.float32))
 
 
 def rotate_coordinate_system(contour, angle, center):
-    """Rotate the contour around a center point by a specified angle."""
     R = np.array([[np.cos(angle), -np.sin(angle)],
                   [np.sin(angle), np.cos(angle)]])
     return (contour - center).dot(R.T) + center
 
 
 def calculate_median_contour(contours):
-    """Calculate the median contour from a list of contours."""
     contour = np.median(np.array(contours), axis=0)
     contour[-1, :] = contour[0, :]  # Close contour
     return contour
 
 
-# ToDo: Implement choice of contour template
-def find_average_contour(masks):
+def find_average_contour(masks, template_index=0):
     # Extract and interpolate contours
     contours_list = extract_and_interpolate_contours(masks)
 
     # Circularly align and match contours using ellipse fitting
-    matched_contour_list, template_contour = match_contours(contours_list)
+    matched_contour_list, template_contour = match_contours(contours_list, template_index)
 
     # Calculate the median contour
     median_contour = calculate_median_contour(matched_contour_list)
