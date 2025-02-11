@@ -1,6 +1,7 @@
 # Additional
 building/*
 */prelim_code/
+*/Example_2_Julia_SpinalCord/
 */correlation/
 */.idea/
 .bash_history/
@@ -138,3 +139,4 @@ dmypy.json
 # Pyre type checker
 .pyre/
 .DS_Store
+/BrainFusion/examples/Example_2_Julia_SpinalCord

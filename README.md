@@ -1,5 +1,6 @@
 # AFM and Brillouin Data Analysis
-This repository contains a Python package for processing and analyzing AFM (Atomic Force Microscopy) and Brillouin data. The package includes functionalities for loading datasets, transforming maps, calculating average contours, and plotting results.
+
+Python package for transforming measurement grids (AFM, Brillouin, in situ HCR, ...) defined on individual embryonic brains to a common coordinate system and averaging the corresponding datasets. Maps can be cross-correlated using a Gaussian Mixture Model to cluster and average regions with high point densities.
 
 ## Table of Contents
 
@@ -13,7 +14,7 @@ This repository contains a Python package for processing and analyzing AFM (Atom
 1. Clone the repository:
    ```bash
    cd <repository-directory>
-   git clone https://github.com/nik-liegroup/spectroscopy_postprocessing
+   git clone https://github.com/nik-liegroup/BrainFusion
    ```
 
 2. Install required packages:
@@ -22,7 +23,7 @@ This repository contains a Python package for processing and analyzing AFM (Atom
    ```
 
 ## Usage
-To analyze AFM and Brillouin data, modify the parameters in the script. You can specify the base folder containing your data, the results folder for saving analysis, and any specific parameters needed for the experiments.
+To analyze AFM and Brillouin data, modify the parameters in the script. You can specify the base folder containing your data, the results folder for saving analysis, and any specific parameters needed for the experiments. For other datasets, you need to create your own function.
 
 ### Example
 #### Define parameters for Brillouin data analysis
@@ -61,4 +62,4 @@ Contributions are welcome! Please feel free to submit a pull request or open an 
 This project is licensed under the MIT License - see the LICENSE file for details.
 
 **Author:** Niklas Gampl\
-**Email:** niklas.gampl@fau.de
+**Email:** niklas.gampl@mpzpm.mpg.de

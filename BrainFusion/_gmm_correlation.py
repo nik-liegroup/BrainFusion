@@ -4,20 +4,20 @@ import numpy as np
 from sklearn.mixture import GaussianMixture
 from scipy.interpolate import griddata
 from scipy.spatial import cKDTree
-from _find_average_contour import match_contours, calculate_median_contour
-from _transform_2Dmap import transform_grid2contour
-from _plot_maps import plot_contours, plot_corr_maps, plot_norm_corr
+from ._find_average_contour import align_contours
+from ._transform_2Dmap import transform_grid2contour
+from ._plot_maps import plot_contours, plot_corr_maps
 from scipy.stats import pearsonr
 from sklearn.preprocessing import MinMaxScaler
 
 
-def fit_coordinates_gmm(grid_list, data_list, same_maps=True, num_components='mean'):
-    assert num_components in ['mean', 'min'], print('Please provide a valid metric for estimating the cluster numbers!')
+def fit_coordinates_gmm(grids, data_list, trafo_data=None, same_maps=True, num_components='mean'):
+    assert num_components in ['mean', 'min'], 'Please provide a valid metric for estimating the cluster numbers!'
     if num_components == 'mean':
-        num_components = max(1, int(np.mean([len(grid) for grid in grid_list])))
+        num_components = max(1, int(np.mean([len(grid) for grid in grids])))
     elif num_components == 'min':
-        num_components = int(min(([len(grid) for grid in grid_list])))
-    all_coords = np.vstack(grid_list)
+        num_components = int(min(([len(grid) for grid in grids])))
+    all_coords = np.vstack(grids)
     gmm = GaussianMixture(n_components=num_components, random_state=42)
     gmm.fit(all_coords)
 
@@ -27,9 +27,15 @@ def fit_coordinates_gmm(grid_list, data_list, same_maps=True, num_components='me
     # Get the cluster centers
     representative_coords = gmm.means_
 
-    avg_dict = {}
     if same_maps:
+        avg_dict = {}
+        gmm_dict = {}
         for key, _ in data_list[0].items():
+            # Average interpolated datasets
+            if trafo_data is not None:
+                data_interp = [d[key + '_trafo'] for d in trafo_data]
+                avg_dict[f'{key}'] = np.mean(data_interp, axis=0)
+
             data_list_tmp = [d[key] for d in data_list]
             all_values = np.concatenate(data_list_tmp)
 
@@ -48,14 +54,14 @@ def fit_coordinates_gmm(grid_list, data_list, same_maps=True, num_components='me
                 median_value = np.nanmedian(cluster_values) if len(cluster_values) > 0 else np.nan
                 median_values.append(median_value)
 
-            avg_dict[f'{key}_median'] = median_values
+            gmm_dict[f'{key}'] = median_values
 
     else:
-        avg_dict = None
-    return representative_coords, avg_dict
+        avg_dict, gmm_dict = None, None
+    return representative_coords, gmm_dict, avg_dict
 
 
-def bin_and_correlate(data_map1, data_map2, grid_points, bin_size=4):
+def bin_and_correlate(data_map1, data_map2, grid_points, bin_size=4, map1_fit_limits=None, map2_fit_limits=None):
     # Ensure both data maps are the same shape
     assert data_map1.shape == data_map2.shape, "Data maps must have the same shape."
 
@@ -68,7 +74,7 @@ def bin_and_correlate(data_map1, data_map2, grid_points, bin_size=4):
     tree = cKDTree(grid_points)
 
     # Create bins by finding the closest points (4 points to one median)
-    indices = tree.query(grid_points, k=bin_size)[1]  # Find the indices of 4 closest points
+    indices = tree.query(grid_points, k=bin_size)[1]  # Find the indices of closest points
 
     # Initialize lists to hold median values
     median_map1 = []
@@ -97,36 +103,48 @@ def bin_and_correlate(data_map1, data_map2, grid_points, bin_size=4):
     median_map1 = median_map1[mask]
     median_map2 = median_map2[mask]
 
+    # Normalize both heatmaps
+    heatmap1_norm = normalize_heatmap(median_map1)
+    heatmap2_norm = normalize_heatmap(median_map2)
+
+    # Filter boundaries
+    mask1 = mask2 = np.full(heatmap1_norm.shape, True, dtype=bool)
+    if map1_fit_limits:
+        mask1 = (heatmap1_norm > map1_fit_limits[0]) & (heatmap1_norm < map1_fit_limits[1])
+
+    if map2_fit_limits:
+        mask2 = (heatmap2_norm > map2_fit_limits[0]) & (heatmap2_norm < map2_fit_limits[1])
+
+    # Apply the combined mask
+    combined_mask = mask1 & mask2
+    heatmap1_norm_f, heatmap2_norm_f = heatmap1_norm[combined_mask], heatmap2_norm[combined_mask]
+
     # Calculate the Pearson correlation coefficient
-    if len(median_map1) > 1 and len(median_map1) > 1:
-        correlation, _ = pearsonr(median_map1, median_map2)
+    if len(heatmap1_norm_f) > 1 and len(heatmap2_norm_f) > 1:
+        correlation, p_value = pearsonr(heatmap1_norm_f, heatmap2_norm_f)
         print("Correlation after binning and taking medians:", correlation)
     else:
         print("Not enough valid data points for correlation.")
         correlation = None
 
-    # Normalize both heatmaps
-    heatmap1_norm = normalize_heatmap(median_map1)
-    heatmap2_norm = normalize_heatmap(median_map2)
-
-    return correlation, heatmap1_norm, heatmap2_norm
+    return {'map1': heatmap1_norm, 'map2': heatmap2_norm, 'pearson': correlation, 'p_value': p_value}
 
 
-# Function to normalize heatmaps
 def normalize_heatmap(heatmap):
     scaler = MinMaxScaler()
     return scaler.fit_transform(heatmap.reshape(-1, 1)).flatten()
 
 
-def afm_brillouin_corr(afm_analysis, afm_params, br_analysis, br_params, results_folder):
+def afm_brillouin_transformation(afm_analysis, afm_params, br_analysis, br_params, results_folder):
     # Extract data variables
     afm_data = afm_analysis['average_data']
     afm_grid = afm_analysis['average_grid']
-    afm_contour = afm_analysis['median_contour']
+    afm_contour = afm_analysis['average_contour']
     afm_key = f'{afm_params['raw_data_key']}_median'
+
     br_data = br_analysis['average_data']
     br_grid = br_analysis['average_grid']
-    br_contour = br_analysis['median_contour']
+    br_contour = br_analysis['average_contour']
     br_key = f'{br_params['raw_data_key']}_median'
 
     # Centre coordinate grids around origin
@@ -141,31 +159,30 @@ def afm_brillouin_corr(afm_analysis, afm_params, br_analysis, br_params, results
     # Create contours list
     contours_list = [afm_contour, br_contour]
 
-    # Circularly align and match contours using ellipse fitting
-    matched_contour_list, template_contour = match_contours(contours_list, template_index=0)
+    # Calculate average contour
+    avg_contour, contours_list, template_contour, matched_contour_list, error_list = align_contours(
+        contours_list=contours_list)
 
-    # Calculate the median contour
-    median_contour = calculate_median_contour(matched_contour_list)
-
-    fig = plot_contours(median_contour, template_contour, matched_contour_list)
-    output_path = os.path.join(results_folder, 'matched_mask_contours.png')
+    # Plot the average contour
+    fig = plot_contours(avg_contour, template_contour, matched_contour_list)
+    output_path = os.path.join(results_folder, 'matched_average_contours.png')
     fig.savefig(output_path, dpi=300, bbox_inches='tight')
     plt.close()
 
-    # Transform original AFM grid to coordinate system of median contour
+    # Transform original AFM grid to coordinate system of average contour
     afm_trafo_grid, afm_trafo_contour = transform_grid2contour(contours_list[0],
-                                                               median_contour,
+                                                               avg_contour,
                                                                afm_grid)
 
-    # Transform original Brillouin grid to coordinate system of median contour
+    # Transform original Brillouin grid to coordinate system of average contour
     br_trafo_grid, br_trafo_contour = transform_grid2contour(contours_list[1],
-                                                             median_contour,
+                                                             avg_contour,
                                                              br_grid)
 
     # Find new coordinates to compare both grids
     trafo_grid_list = [afm_trafo_grid, br_trafo_grid]
     data_list = [afm_data, br_data]
-    grid_avg, _ = fit_coordinates_gmm(trafo_grid_list, data_list, same_maps=False, num_components='min')
+    grid_avg, _, _ = fit_coordinates_gmm(trafo_grid_list, data_list, same_maps=False, num_components='min')
 
     # Transform data to new grid
     afm_data_interp, br_data_interp = {}, {}
@@ -175,7 +192,7 @@ def afm_brillouin_corr(afm_analysis, afm_params, br_analysis, br_params, results
         br_data_interp[f'{key}'] = griddata(br_trafo_grid, value, grid_avg, method='linear')
 
     # Plot transformed heatmaps side by side
-    fig = plot_corr_maps(median_contour,
+    fig = plot_corr_maps(avg_contour,
                          afm_map=afm_data_interp[afm_key],
                          brillouin_map=br_data_interp[br_key],
                          grid=grid_avg,
@@ -183,20 +200,8 @@ def afm_brillouin_corr(afm_analysis, afm_params, br_analysis, br_params, results
                          marker_size=150,
                          vmin=None,
                          vmax=None)
-    output_path = os.path.join(results_folder, f'MapsComparison.png')
+    output_path = os.path.join(results_folder, f'MapComparison.png')
     fig.savefig(output_path, dpi=300, bbox_inches='tight')
     plt.close()
 
-    # Calculate correlation between maps
-    correlation, afm_norm, br_norm, = bin_and_correlate(afm_data_interp[afm_key],
-                                                        br_data_interp[br_key],
-                                                        grid_avg,
-                                                        bin_size=1)
-
-    # Plot normalized correlation
-    fig = plot_norm_corr(afm_norm, br_norm, correlation)
-    output_path = os.path.join(results_folder, f'BrillouinAFMCorrelationMap.png')
-    fig.savefig(output_path, dpi=300, bbox_inches='tight')
-    plt.close()
-
-    return correlation, median_contour, afm_data_interp, br_data_interp, grid_avg
+    return afm_data_interp, br_data_interp, grid_avg, avg_contour
