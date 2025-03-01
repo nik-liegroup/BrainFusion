@@ -1,9 +1,9 @@
-# Additional
+# Directories
 building/*
-*/prelim_code/
-*/Example_2_Julia_SpinalCord/
-*/correlation/
-*/.idea/
+*/prelim_code
+/BrainFusion/examples/Example_1_BrainTissueStiffnessAndFluidity/data
+/BrainFusion/examples/Example_2_JB_SpinalCord/data
+/.idea
 .bash_history/
 .ssh/*
 .vscode-server/*
@@ -14,8 +14,12 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# C extensions
+# File extensions
 *.so
+*.h5
+*.parquet
+*.mat
+*.png
 
 # Distribution / packaging
 .Python
@@ -139,4 +143,3 @@ dmypy.json
 # Pyre type checker
 .pyre/
 .DS_Store
-/BrainFusion/examples/Example_2_Julia_SpinalCord

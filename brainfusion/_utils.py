@@ -2,7 +2,40 @@ import numpy as np
 import os
 import matplotlib.path as mpath
 import h5py
-from scipy.spatial.distance import pdist
+import pandas as pd
+
+
+def read_parquet_file(path, image=False):
+    """
+    Reads in parquet files either as images in matrix format or as a Nx2 list of coordinates with the respective N values.
+    """
+    df = pd.read_parquet(path, engine='pyarrow')
+    if image:
+        df = df.sort_values(by=["y", "x"])
+        img = df.pivot(index="y", columns="x", values="value_orig")
+        return img
+    else:
+        grid = df[['x', 'y']].to_numpy()
+        data = df[['value_background_corrected']].to_numpy().ravel()
+        return grid, data
+
+
+def append_parquet_file(path, brainfusion_analysis):
+    """
+    Write brainfusion analysis file to parquet file.
+    """
+    parquet_file_names = [filename + '_Merged_RAW_ch02_image_roi_linearised.parquet'
+                          for filename in brainfusion_analysis['myelin_filenames']]
+    for idx, file_name in enumerate(parquet_file_names):
+        parquet_file_path = os.path.join(path, file_name)
+        df = pd.read_parquet(parquet_file_path, engine='pyarrow')
+        trafo_grid = brainfusion_analysis['myelin_trafo_grids'][idx]
+
+        # ToDo: Remove for writing proper data
+        trafo_grid = np.zeros((len(df), 2))
+
+        df['x_translated'], df['y_translated'] = trafo_grid[:, 0], trafo_grid[:, 1]
+        df.to_parquet(parquet_file_path.removesuffix(".parquet") + '_Trafo' + '.parquet', index=False, engine='pyarrow')
 
 
 def get_roi_from_txt(roi_path, delimiter='\t'):
@@ -124,14 +157,6 @@ def rotate3Dgrid(grid, angle, center_x, center_y):
     return rotated_grid
 
 
-def write_dict_in_h5(h5file, group_path, dic):
-    for key, item in dic.items():
-        if isinstance(item, dict):
-            write_dict_in_h5(h5file, f"{group_path}/{key}", item)
-        else:
-            h5file.create_dataset(f"{group_path}/{key}", data=item)
-
-
 def export_analysis(path, analysis, params):
     with h5py.File(path, 'w') as h5file:
         write_dict_in_h5(h5file, '/', analysis)
@@ -149,6 +174,19 @@ def export_analysis(path, analysis, params):
     print(f"Results and parameters saved in {path}.")
 
 
+def write_dict_in_h5(h5file, group_path, dic):
+    for key, item in dic.items():
+        if isinstance(item, dict):
+            write_dict_in_h5(h5file, f"{group_path}/{key}", item)
+        elif isinstance(item, list) and all(isinstance(i, np.ndarray) for i in item):
+            # Create a group for the list
+            list_group = h5file.create_group(f"{group_path}/{key}")
+            for i, arr in enumerate(item):
+                list_group.create_dataset(str(i), data=arr)  # Store each array separately
+        else:
+            h5file.create_dataset(f"{group_path}/{key}", data=item)
+
+
 def read_dict_from_h5(h5file, group_path='/'):
     result = {}
     group = h5file[group_path]
@@ -157,12 +195,24 @@ def read_dict_from_h5(h5file, group_path='/'):
         if isinstance(item, h5py.Group):
             result[key] = read_dict_from_h5(h5file, f"{group_path}/{key}")
         else:
-            result[key] = item[()]  # Reads dataset values
+            data = item[()]  # Read dataset normally
+
+            # Convert 'myelin_filenames' to list
+            if key == 'myelin_filenames' and isinstance(data, np.ndarray):
+                result[key] = [s.decode('utf-8') if isinstance(s, bytes) else s for s in data.tolist()]
+            else:
+                result[key] = data  # Keep as is for other cases
+
+    # If all keys are numerical, convert dict to list
+    if all(k.isdigit() for k in result.keys()):
+        sorted_keys = sorted(result.keys(), key=int)  # Sort keys numerically
+        result = [result[k] for k in sorted_keys]  # Convert to list
 
     return result
 
 
 def import_analysis(path):
+    print(f'Importing analysis file from: {os.path.basename(path)}.')
     with h5py.File(path, 'r') as h5file:
         # Load the analysis (stored in groups/datasets)
         analysis = read_dict_from_h5(h5file, '/')

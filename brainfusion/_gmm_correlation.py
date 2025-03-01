@@ -2,13 +2,14 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 from sklearn.mixture import GaussianMixture
+from sklearn.preprocessing import MinMaxScaler
 from scipy.interpolate import griddata
 from scipy.spatial import cKDTree
-from ._find_average_contour import align_contours
-from ._transform_2Dmap import transform_grid2contour
-from ._plot_maps import plot_contours, plot_corr_maps
 from scipy.stats import pearsonr
-from sklearn.preprocessing import MinMaxScaler
+
+from brainfusion._match_contours import align_contours
+from brainfusion._transform_2Dmap import transform_grid2contour
+from brainfusion._plot_maps import plot_contours, plot_corr_maps
 
 
 def fit_coordinates_gmm(grids, data_list, trafo_data=None, same_maps=True, num_components='mean'):
@@ -33,6 +34,7 @@ def fit_coordinates_gmm(grids, data_list, trafo_data=None, same_maps=True, num_c
         for key, _ in data_list[0].items():
             # Average interpolated datasets
             if trafo_data is not None:
+                avg_dict = average_regular_dicts(data_list, trafo_data)
                 data_interp = [d[key + '_trafo'] for d in trafo_data]
                 avg_dict[f'{key}'] = np.mean(data_interp, axis=0)
 
@@ -59,6 +61,16 @@ def fit_coordinates_gmm(grids, data_list, trafo_data=None, same_maps=True, num_c
     else:
         avg_dict, gmm_dict = None, None
     return representative_coords, gmm_dict, avg_dict
+
+
+def average_regular_dicts(data_list, trafo_data):
+    avg_dict = {}
+    for key, _ in data_list[0].items():
+        # Average interpolated datasets
+        data_interp = [d[key + '_trafo'] for d in trafo_data]
+        avg_dict[f'{key}'] = np.mean(data_interp, axis=0)
+
+    return avg_dict
 
 
 def bin_and_correlate(data_map1, data_map2, grid_points, bin_size=4, map1_fit_limits=None, map2_fit_limits=None):

@@ -1,40 +1,35 @@
 import numpy as np
 from scipy.interpolate import Rbf
+from tqdm import tqdm
 
 
-def transform_grid2contour(original_contour, deformed_contour, original_grid):
+def transform_grid2contour(original_contour, deformed_contour, original_grid, progress=''):
     # Create RBF interpolators
     rbf_x, rbf_y = create_rbf_interpolators(original_contour=original_contour,
                                             deformed_contour=deformed_contour)
 
-    # Transform original contour to the coordinate system of the deformed contour
-    trafo_cont_x, trafo_cont_y = evaluate_transformation(rbf_x, rbf_y, original_contour)
-    trafo_contour = np.vstack([trafo_cont_x, trafo_cont_y]).T
+    # Apply transformation to original contour to check whether deformation works as expected
+    trafo_contour = np.array([
+        [rbf_x(x, y), rbf_y(x, y)] for x, y in original_contour
+    ])
 
-    # Transform original grid to the coordinate system defined by the average contour
-    trafo_grid_x, trafo_grid_y = evaluate_transformation(rbf_x, rbf_y, original_grid)
-    trafo_grid = np.vstack([trafo_grid_x, trafo_grid_y]).T
+    # Deform original grid to coordinate system of deformed contour
+    trafo_grid = np.array([
+        [rbf_x(x, y), rbf_y(x, y)] for x, y in tqdm(original_grid, desc="Transforming grid" + progress)
+    ])
 
     return trafo_grid, trafo_contour
 
 
 # ToDo: Implement new interpolation function scipy.interpolate.RBFInterpolator
-def create_rbf_interpolators(original_contour, deformed_contour):
+def create_rbf_interpolators(original_contour, deformed_contour, function='thin_plate', smooth=0.2):
     x_orig, y_orig = original_contour[:, 0], original_contour[:, 1]
     x_deform, y_deform = deformed_contour[:, 0], deformed_contour[:, 1]
 
-    rbf_x = Rbf(x_orig, y_orig, x_deform, function='linear', smooth=0.2)
-    rbf_y = Rbf(x_orig, y_orig, y_deform, function='linear', smooth=0.2)
+    rbf_x = Rbf(x_orig, y_orig, x_deform, function=function, smooth=smooth)
+    rbf_y = Rbf(x_orig, y_orig, y_deform, function=function, smooth=smooth)
 
     return rbf_x, rbf_y
-
-
-def evaluate_transformation(rbf_x, rbf_y, grid_points):
-    grid_x, grid_y = grid_points[:, 0], grid_points[:, 1]
-    trafo_grid_x = rbf_x(grid_x, grid_y)
-    trafo_grid_y = rbf_y(grid_x, grid_y)
-
-    return trafo_grid_x, trafo_grid_y
 
 
 def extend_grid(regular_grid, x_extend, y_extend):

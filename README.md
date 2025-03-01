@@ -1,6 +1,6 @@
 # AFM and Brillouin Data Analysis
 
-Python package for transforming measurement grids (AFM, Brillouin, in situ HCR, ...) defined on individual embryonic brains to a common coordinate system and averaging the corresponding datasets. Maps can be cross-correlated using a Gaussian Mixture Model to cluster and average regions with high point densities.
+Python package for transforming measurement grids (AFM, Brillouin, in situ HCR images, ...) defined on similar shapes to a common frame. Contour paths enclosing the shape geometries are aligned using DTW boundary matching with a curvature penalty. The transformation between contours is modelled with radial basis functions (thin plate splines) and applied to the grid coordinates within the contour. Measurement data can be averaged by interpolation to a common regular grid or using a Gaussian Mixture Model to find clusters. This can be used to cross-correlate multiple averaged maps from different measurement modalities.
 
 ## Table of Contents
 
@@ -11,15 +11,22 @@ Python package for transforming measurement grids (AFM, Brillouin, in situ HCR, 
 5. [License](#license)
 
 ## Installation
-1. Clone the repository:
+1. Clone the Repository:
    ```bash
    cd <repository-directory>
    git clone https://github.com/nik-liegroup/BrainFusion
    ```
-
-2. Install required packages:
+   
+2. Create Virtual Conda Environment and Activate
+   ```bash
+   conda create --name brainfusion-env python=3.12
+   conda activate brainfusion-env
+   ```
+   
+3. Install Brainfusion Package with Dependencies:
     ```bash
-   pip install -r requirements.txt
+   cd <repository-directory>\BrainFusion
+   pip install .
    ```
 
 ## Usage

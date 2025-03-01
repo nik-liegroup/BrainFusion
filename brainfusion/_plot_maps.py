@@ -1,13 +1,12 @@
-import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
 import numpy as np
 import os
-from ._utils import mask_contour
-from shapely.geometry import Polygon, Point
+import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
 from scipy.optimize import curve_fit
-from scipy.interpolate import griddata
 from scipy.stats import f
 
+from brainfusion._utils import mask_contour
+from brainfusion._transform_2Dmap import transform_grid2contour
 plt.rcParams['svg.fonttype'] = 'none'
 
 
@@ -89,6 +88,82 @@ def plot_experiments(analysis_file, results_folder, raw_data_key, average='inter
     plt.close()
 
 
+def plot_sc_experiments(analysis_file, results_folder, label='', cmap='grey', marker_size=20,
+                        vmin=None, vmax=None, verify_trafo=False, **kwargs):
+    print(f'Plotting spinal cord data: {os.path.basename(os.path.dirname(results_folder))}.')
+    os.makedirs(results_folder, exist_ok=True)
+
+    avg_data = analysis_file['myelin_interpolated_dataset']
+    avg_grid = analysis_file['myelin_interpolated_grid']
+    afm_contours = analysis_file['afm_contours']
+
+    # Plot original maps on background images and plot original/transformed maps next to each other
+    for index, c in enumerate(analysis_file['myelin_datasets']):
+        # Extract arrays
+        matched_contour = analysis_file['myelin_contours'][index]
+        raw_data = analysis_file['myelin_datasets'][index]
+        matched_grid = analysis_file['myelin_grids'][index]
+        trafo_grid = analysis_file['myelin_trafo_grids'][index]
+
+        if verify_trafo:
+            cmap = 'viridis'
+            num_points_per_axis = 50
+
+            # Get min and max x, y coordinates
+            min_x, min_y = np.min(matched_grid, axis=0) - [100, 100]
+            max_x, max_y = np.max(matched_grid, axis=0) + [100, 100]
+
+            # Generate linearly spaced grid points
+            x_values = np.linspace(min_x, max_x, num_points_per_axis)
+            y_values = np.linspace(min_y, max_y, num_points_per_axis)
+
+            # Create meshgrid
+            x_grid, y_grid = np.meshgrid(x_values, y_values)
+            matched_grid = np.column_stack((x_grid.ravel(), y_grid.ravel()))
+
+            # Randomly sample values from the discrete list for each grid point
+            raw_data = np.random.choice(np.linspace(1, 10, 10), size=matched_grid.shape[0])
+
+            trafo_grid, _ = transform_grid2contour(matched_contour, afm_contours[index], matched_grid)
+
+        # Plot original and transformed data grids
+        fig = plot_trafo_map(matched_contour,
+                             afm_contours[index],
+                             raw_data,
+                             matched_grid,
+                             trafo_grid,
+                             label=label,
+                             cmap=cmap,
+                             marker_size=marker_size,
+                             vmin=vmin,
+                             vmax=vmax,
+                             mask=True)
+        output_path = os.path.join(results_folder, f'Transformed_{analysis_file['myelin_filenames'][index]}.png')
+        fig.savefig(output_path, dpi=300, bbox_inches='tight')
+        plt.close()
+
+    # Plot all original contours and the averaged contour
+    cont = analysis_file['myelin_contours']
+    iterator = list(cont.values()) if type(cont) is dict else cont
+    fig = plot_contours(afm_contours[0], iterator)
+    output_path = os.path.join(results_folder, 'matched_contours.png')
+    fig.savefig(output_path, dpi=300, bbox_inches='tight')
+    plt.close()
+
+    fig = plot_average_map2(avg_data,
+                            avg_grid,
+                            afm_contours[0],
+                            label=label,
+                            cmap=cmap,
+                            marker_size=marker_size,
+                            vmin=vmin,
+                            vmax=vmax)
+
+    output_path = os.path.join(results_folder, f'Averaged_Myelin_Maps.png')
+    fig.savefig(output_path, dpi=300, bbox_inches='tight')
+    plt.close()
+
+
 def plot_contours(average_contour, matched_contours):
     fig = plt.figure(figsize=(8, 8))
 
@@ -106,6 +181,8 @@ def plot_contours(average_contour, matched_contours):
     # Plot the averaged contour
     plt.plot(average_contour[:, 0], average_contour[:, 1], color='blue', linestyle='--', linewidth=4,
              label='Averaged Contour')
+    plt.scatter(average_contour[0, 0], average_contour[0, 1], color='blue', s=25, zorder=6,
+                label='First Avg. Coordinate')
 
     plt.legend()
     plt.axis('equal')
@@ -163,21 +240,34 @@ def plot_map_on_image(img, data, grid, contour, folder_name, scale=1, label='', 
 def plot_trafo_map(contour, avg_contour, data, grid, trafo_grid, label='', cmap='viridis', marker_size=30,
                    vmin=None, vmax=None, mask=False):
     # Create subplots with two side-by-side plots
-    fig, axes = plt.subplots(1, 2, figsize=(15, 7))
+    fig, axes = plt.subplots(1, 3, figsize=(25, 7))
 
-    # Plot the original contours
-    axes[0].plot(contour[:, 0], contour[:, 1], color='grey', linestyle='-', linewidth=3,
+    axes[0].plot(contour[:, 0], contour[:, 1], c='grey', linestyle='-')
+    axes[0].scatter(contour[:, 0], contour[:, 1], c='k', s=5)
+    axes[0].plot(avg_contour[:, 0], avg_contour[:, 1], 'blue', linestyle='-')
+    axes[0].scatter(avg_contour[:, 0], avg_contour[:, 1], c='b', s=5)
+
+    axes[0].quiver(contour[:, 0], contour[:, 1],
+               avg_contour[:, 0] - contour[:, 0], avg_contour[:, 1] - contour[:, 1],
+               angles='xy', scale_units='xy', scale=1, color='r', alpha=0.8, zorder=3)
+
+    axes[0].set_title('DTW with Curvature Penalty', fontsize=20)
+    axes[0].axis('equal')
+    axes[0].set_xticks([])
+    axes[0].set_yticks([])
+
+    axes[1].plot(contour[:, 0], contour[:, 1], color='grey', linestyle='-', linewidth=3,
                  label='Original Contour')
-    axes[0].plot(avg_contour[:, 0], avg_contour[:, 1], color='blue', linestyle='--', linewidth=4,
-                 label='Average Contour')
 
     # Original grid
     if mask:
         mask_1 = mask_contour(contour, grid)
+        mask_tmp = data >= 0
+        mask_1 = mask_1 & mask_tmp
     else:
-        mask_1 = np.full(grid.shape[0], True)
+        mask_1 = np.full(grid.shape[1], True)
 
-    axes[0].scatter(np.ma.masked_where(~mask_1, grid[:, 0]),
+    axes[1].scatter(np.ma.masked_where(~mask_1, grid[:, 0]),
                     np.ma.masked_where(~mask_1, grid[:, 1]),
                     c=data,
                     cmap=cmap,
@@ -185,24 +275,28 @@ def plot_trafo_map(contour, avg_contour, data, grid, trafo_grid, label='', cmap=
                     vmin=vmin,
                     vmax=vmax)
 
-    axes[0].legend()
-    axes[0].set_title('Original data map', fontsize=20)
-    axes[0].grid()
-    axes[0].axis('equal')
+    #axes[1].legend()
+    axes[1].set_title('Original Data Map', fontsize=20)
+    #axes[1].grid()
+    axes[1].axis('equal')
+    axes[1].set_xticks([])
+    axes[1].set_yticks([])
 
     # Plot the transformed contours
-    axes[1].plot(contour[:, 0], contour[:, 1], color='grey', linestyle='-', linewidth=3,
-                 label='Original Contour')
-    axes[1].plot(avg_contour[:, 0], avg_contour[:, 1], color='blue', linestyle='--', linewidth=4,
+    #axes[2].plot(contour[:, 0], contour[:, 1], color='grey', linestyle='-', linewidth=3,
+    #             label='Original Contour')
+    axes[2].plot(avg_contour[:, 0], avg_contour[:, 1], color='blue', linestyle='--', linewidth=4,
                  label='Average Contour')
 
     # Transformed grid
     if mask:
         mask_2 = mask_contour(avg_contour, trafo_grid)
+        mask_tmp = data >= 0
+        mask_2 = mask_2 & mask_tmp
     else:
         mask_2 = np.full(trafo_grid.shape[0], True)
 
-    heatmap = axes[1].scatter(np.ma.masked_where(~mask_2, trafo_grid[:, 0]),
+    heatmap = axes[2].scatter(np.ma.masked_where(~mask_2, trafo_grid[:, 0]),
                               np.ma.masked_where(~mask_2, trafo_grid[:, 1]),
                               c=data,
                               cmap=cmap,
@@ -210,17 +304,15 @@ def plot_trafo_map(contour, avg_contour, data, grid, trafo_grid, label='', cmap=
                               vmin=vmin,
                               vmax=vmax)
 
-    axes[1].legend()
-    axes[1].set_title('Transformed data map', fontsize=20)
-    axes[1].grid()
-    axes[1].axis('equal')
-
-    # Set axis limits to be the same for both plots
-    axes[1].set_xlim(axes[0].get_xlim())
-    axes[1].set_ylim(axes[0].get_ylim())
+    #axes[2].legend(loc=1)
+    axes[2].set_title('Transformed Data Map', fontsize=20)
+    #axes[2].grid()
+    axes[2].axis('equal')
+    axes[2].set_xticks([])
+    axes[2].set_yticks([])
 
     # Plot colorbar
-    cbar = fig.colorbar(heatmap, ax=axes[1])
+    cbar = fig.colorbar(heatmap, ax=axes[2])
     cbar.ax.tick_params(labelsize=20)
     cbar.set_label(label, size=30)
 
@@ -228,6 +320,13 @@ def plot_trafo_map(contour, avg_contour, data, grid, trafo_grid, label='', cmap=
     plt.tight_layout()
 
     return fig
+
+
+def calculate_arc_length(contour):
+    # Calculate the arc length along the contour
+    distances = np.linalg.norm(np.diff(contour, axis=0), axis=1)
+    arc_length = np.insert(np.cumsum(distances), 0, 0)  # Cumulative sum of distances
+    return arc_length
 
 
 def plot_average_map(data_maps, grid_trafos, data_avg, grid_avg, average_contour, data_variable, label='',
@@ -287,6 +386,46 @@ def plot_average_map(data_maps, grid_trafos, data_avg, grid_avg, average_contour
 
     # Add colorbar
     cbar = fig.colorbar(heatmap, ax=axes[1])
+    cbar.ax.tick_params(labelsize=20)
+    cbar.set_label(label, size=30)
+
+    # Adjust layout to avoid overlap
+    plt.tight_layout()
+
+    return fig
+
+
+def plot_average_map2(data_avg, grid_avg, average_contour, label='', cmap='viridis', marker_size=15,
+                      vmin=None, vmax=None, mask=True):
+    # Create plot
+    fig = plt.figure(figsize=(8, 8))
+
+    # Average contour
+    plt.plot(average_contour[:, 0], average_contour[:, 1], 'b--', linewidth=5, label='AFM Contour')
+
+    # Mask average data
+    if mask is True:
+        mask_2 = mask_contour(average_contour, grid_avg)
+    else:
+        mask_2 = np.full(grid_avg.shape[0], True)
+
+    # Plot average data
+    heatmap = plt.scatter(np.ma.masked_where(~mask_2, grid_avg[:, 0]),
+                          np.ma.masked_where(~mask_2, grid_avg[:, 1]),
+                          c=data_avg,
+                          cmap=cmap,
+                          s=marker_size,
+                          marker='s',
+                          alpha=1,
+                          vmin=vmin,
+                          vmax=vmax)
+
+    plt.legend()
+    plt.grid()
+    plt.axis('equal')
+
+    # Add colorbar
+    cbar = fig.colorbar(heatmap)
     cbar.ax.tick_params(labelsize=20)
     cbar.set_label(label, size=30)
 
