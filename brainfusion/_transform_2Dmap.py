@@ -3,7 +3,7 @@ from scipy.interpolate import Rbf
 from tqdm import tqdm
 
 
-def transform_grid2contour(original_contour, deformed_contour, original_grid, progress=''):
+def transform_grid2contour(original_contour, deformed_contour, original_grid, test_grid, progress=''):
     # Create RBF interpolators
     rbf_x, rbf_y = create_rbf_interpolators(original_contour=original_contour,
                                             deformed_contour=deformed_contour)
@@ -18,7 +18,11 @@ def transform_grid2contour(original_contour, deformed_contour, original_grid, pr
         [rbf_x(x, y), rbf_y(x, y)] for x, y in tqdm(original_grid, desc="Transforming grid" + progress)
     ])
 
-    return trafo_grid, trafo_contour
+    trafo_ver_grid = np.array([
+        [rbf_x(x, y), rbf_y(x, y)] for x, y in test_grid
+    ])
+
+    return trafo_grid, trafo_ver_grid, trafo_contour
 
 
 # ToDo: Implement new interpolation function scipy.interpolate.RBFInterpolator

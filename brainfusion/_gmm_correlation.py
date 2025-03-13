@@ -6,10 +6,12 @@ from sklearn.preprocessing import MinMaxScaler
 from scipy.interpolate import griddata
 from scipy.spatial import cKDTree
 from scipy.stats import pearsonr
+import pandas as pd
 
 from brainfusion._match_contours import align_contours
 from brainfusion._transform_2Dmap import transform_grid2contour
-from brainfusion._plot_maps import plot_contours, plot_corr_maps
+from brainfusion._plot_maps import plot_contours, plot_corr_maps, plot_correlation_with_radii
+from brainfusion._utils import mask_contour
 
 
 def fit_coordinates_gmm(grids, data_list, trafo_data=None, same_maps=True, num_components='mean'):
@@ -217,3 +219,117 @@ def afm_brillouin_transformation(afm_analysis, afm_params, br_analysis, br_param
     plt.close()
 
     return afm_data_interp, br_data_interp, grid_avg, avg_contour
+
+
+def compute_max_radius(afm_grid):
+    """
+    Computes the maximal non-overlapping radius for each AFM point.
+    The radius is set as half of the distance to the nearest AFM neighbor.
+    """
+    tree = cKDTree(afm_grid)
+    distances, _ = tree.query(afm_grid, k=2)  # k=2 because first match is the point itself
+    max_radii = distances[:, 1] / 2  # Take half of the nearest neighbor distance
+    return max_radii
+
+
+def average_within_radius(myelin_grid, myelin_data, afm_grid, radius, average_func=np.nanmean):
+    """
+    Computes the average of myelin values within a given radius for each AFM measurement point,
+    ensuring that no myelin point is used more than once.
+    """
+    if radius == 'max':
+        radius = compute_max_radius(afm_grid)  # Compute adaptive radii
+    elif isinstance(radius, (float, int)):
+        radius = np.full(len(afm_grid), radius)  # Use the same radius for all AFM points
+
+    # Build KDTree for fast spatial queries
+    tree = cKDTree(myelin_grid)
+
+    # Initialize output array
+    avg_values = np.full(len(afm_grid), np.nan)
+
+    # Track which myelin points have been assigned (to prevent duplicate use)
+    assigned_mask = np.zeros(len(myelin_grid), dtype=bool)
+
+    # Query the KDTree for points within the radius
+    for i, afm_point in enumerate(afm_grid):
+        search_radius = radius[i]
+        indices = tree.query_ball_point(afm_point, search_radius)
+
+        # Filter out already assigned myelin points
+        valid_indices = [idx for idx in indices if not assigned_mask[idx]]
+
+        if valid_indices:  # If valid myelin points are found
+            avg_values[i] = average_func(myelin_data[valid_indices])
+
+            # Mark these myelin points as assigned so they are not reused
+            assigned_mask[valid_indices] = True
+
+    return avg_values, radius
+
+
+def correlate_afm_myelin(afm_analysis, radius='max', afm_metric='modulus', average_func=np.nanmean, verify_corr=False):
+    """
+    Computes the correlation between AFM data and averaged myelin data within a given radius.
+    Only considers data points inside the AFM contour.
+    """
+    afm_contour = afm_analysis['template_contours'][0]
+    afm_data = afm_analysis['template_dataset'][afm_metric]
+    afm_grid = afm_analysis['template_grid']
+
+    # Insert interpolated dataset at index 0
+    myelin_datasets = [afm_analysis['measurement_interpolated_dataset']] + afm_analysis['measurement_datasets']
+    myelin_grids = [afm_analysis['measurement_interpolated_grid']] + afm_analysis['measurement_trafo_grids']
+    myelin_filenames = ['Interpolated'] + afm_analysis['measurement_filenames']
+
+    results = []
+
+    # Mask AFM points inside contour
+    afm_mask = mask_contour(afm_contour, afm_grid)
+    afm_grid_filtered = afm_grid[afm_mask]
+    afm_data_filtered = afm_data[afm_mask]
+
+    # Calculate correlations between AFM data and each myelin dataset
+    for idx, myelin_name in enumerate(myelin_filenames):
+        myelin_grid = myelin_grids[idx]
+        myelin_dataset = myelin_datasets[idx]
+
+        if verify_corr:
+            myelin_grid = afm_analysis['verification_trafo_grids'][idx-1] if idx > 0 else afm_analysis['verification_grids'][0]
+            myelin_dataset = np.random.choice(np.linspace(1, 10, 10), size=myelin_grid.shape[0])
+
+        # Mask myelin points inside contour
+        myelin_mask = mask_contour(afm_contour, myelin_grid)
+        myelin_grid_filtered = myelin_grid[myelin_mask]
+        myelin_data_filtered = myelin_dataset[myelin_mask]
+
+        # Compute averaged myelin values
+        avg_myelin_values, radii = average_within_radius(myelin_grid_filtered, myelin_data_filtered, afm_grid_filtered,
+                                                         radius,
+                                                         average_func)
+
+        # Remove NaNs before correlation
+        valid_mask = ~np.isnan(avg_myelin_values)
+        afm_data_valid = afm_data_filtered[valid_mask]
+        avg_myelin_values_valid = avg_myelin_values[valid_mask]
+
+        # Ensure there are enough points for correlation
+        if len(afm_data_valid) > 1:
+            correlation, p_value = pearsonr(afm_data_valid, avg_myelin_values_valid)
+        else:
+            correlation, p_value = np.nan, np.nan  # Not enough data
+
+        # Store result
+        results.append({
+            "correlation_pair": f"AFM_{afm_metric} vs {myelin_name}",
+            "correlation_value": correlation,
+            "p_value": p_value
+        })
+
+        plot_correlation_with_radii(afm_grid_filtered, myelin_grid_filtered, afm_contour, radii,
+                                    title=results[-1]["correlation_pair"])
+        print(results[-1]["correlation_pair"] + ": " + f"{correlation}")
+
+    # Convert results to DataFrame
+    results_df = pd.DataFrame(results)
+    return results_df

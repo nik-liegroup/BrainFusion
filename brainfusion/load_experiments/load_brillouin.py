@@ -5,7 +5,8 @@ import re
 import pandas as pd
 import h5py
 import threading
-from .._utils import get_roi_from_txt, project_brillouin_dataset
+from brainfusion._io import get_roi_from_txt
+from brainfusion._utils import project_brillouin_dataset
 
 
 def load_brillouin_experiment(folder_path):
