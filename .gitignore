@@ -1,9 +1,12 @@
 # Directories
 building/*
 */prelim_code
+*/old_code
 /brainfusion/examples/Example_1_BrainTissueStiffnessAndFluidity/data
 /brainfusion/examples/Example_2_JB_SpinalCord/data
 /brainfusion/examples/Example_3_SM_TissueStiffnessHCR/data
+/brainfusion/examples/Example_4_NG_BrillouinGrids/data
+
 /.idea
 .bash_history/
 .ssh/*

@@ -36,16 +36,16 @@ hcr_analysis_path = os.path.join(base_folder, 'BrainFusion_HCR_Analysis.h5')
 # Run the analysis in case the resulting h5 has not been created yet or the results should be overwritten
 if not os.path.exists(hcr_analysis_path) or hcr_params["overwrite_analysis"]:
     loaded = load_hcr_experiment(folder_path=base_folder, **hcr_params)
-    hcr_analysis = fuse_measurement_datasets(base_path=base_folder, **loaded, **hcr_params)
+    hcr_analysis = fuse_measurement_datasets(base_path=base_folder, **loaded, **hcr_params, outline_averaging='median')
     export_analysis(hcr_analysis_path, hcr_analysis, hcr_params)
 # Import the pre-computed analysis file for further post-processing steps
 else:
     hcr_analysis, hcr_params_loaded = import_analysis(hcr_analysis_path)
 
     # Check if the currently defined analysis parameters match with the imported analysis parameters
-    check_parameters(hcr_params, hcr_params_loaded)
+    #check_parameters(hcr_params, hcr_params_loaded)
 
 # Plot the transformation results
 plot_brainfusion_results(hcr_analysis, **hcr_params,
-                         results_folder=os.path.join(base_folder, 'results'), key_quant='Channel_1',
-                         label='', cmap='grey', marker_size=35, vmin=None, vmax=None, verify_trafo=True)
+                         results_folder=os.path.join(base_folder, 'results'), key_quant='Channel_3',
+                         label='', cmap='Greens', marker_size=25, vmin=None, vmax=1024, verify_trafo=False, mask=True)

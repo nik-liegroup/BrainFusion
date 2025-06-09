@@ -11,9 +11,7 @@ def check_parameters(params_defined, params_loaded):
     differences = {}
 
     for key, value in params_defined.items():
-        if key == 'load_experiment_func':
-            continue
-        elif key in params_loaded:
+        if key in params_loaded:
             loaded_value = params_loaded[key]
 
             # Handle lists separately to compare their content rather than object identity
@@ -42,12 +40,13 @@ def check_parameters(params_defined, params_loaded):
 
 
 def export_analysis(path, analysis, params):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     with h5py.File(path, 'w') as h5file:
         write_dict_in_h5(h5file, '/', analysis)
 
         # Save parameters as attributes
         for key, value in params.items():
-            if key == 'load_experiment_func':
+            if key == 'overwrite_analysis':
                 continue
 
             h5file.attrs[key] = value
@@ -154,7 +153,7 @@ def read_dict_from_h5(h5file, group_path='/'):
     return result
 
 
-def get_roi_from_txt(roi_path, delimiter='\t'):
+def get_roi_from_txt(roi_path, delimiter='\t', skip=0):
     """
     Load boundary data from text file into Nx2 array.
     """
@@ -163,11 +162,19 @@ def get_roi_from_txt(roi_path, delimiter='\t'):
         with open(roi_path, 'r') as f:
             # Store the content in a list
             content = f.readlines()
-            # Remove newline characters and split coordinates
-            coordinates = [tuple(line.strip().split(delimiter)) for line in content]
 
-            # Convert to Nx2 NumPy array
-            return np.array(coordinates, dtype=float)
+        # Skip first lines
+        content = content[skip:]  # Skip the first lines
+
+        # Remove newline characters and split coordinates
+        coordinates = [tuple(line.strip().split(delimiter)) for line in content]
+
+        # Convert to Nx2 NumPy array
+        try:
+            return np.array(coordinates, dtype=float)  # Convert to Nx2 NumPy array
+        except ValueError:
+            print(f"Error: Could not convert data in {roi_path} to float. Check file formatting.")
+            return None
     else:
         print(f'{roi_path} is not a valid .txt file, continuing without!')
         return None

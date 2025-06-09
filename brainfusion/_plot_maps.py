@@ -5,50 +5,23 @@ import matplotlib.colors as mcolors
 import matplotlib.patches as patches
 from scipy.optimize import curve_fit
 from scipy.stats import f
+from tifffile import imwrite
+from skimage.transform import AffineTransform
 
 from brainfusion._utils import mask_contour
-from brainfusion._transform_2Dmap import transform_grid2contour
 
 plt.rcParams['svg.fonttype'] = 'none'
 
 
-def plot_brainfusion_results(analysis_file, results_folder, key_quant, label='', cmap='afmhot',
-                             marker_size=20, vmin=None, vmax=None, verify_trafo=False, **kwargs):
+def plot_brainfusion_results(analysis_file, results_folder, key_quant, image_dataset=False, cbar_label='', cmap='afmhot',
+                             marker_size=20, mask=True, vmin=None, vmax=None, verify_trafo=False, plot_background=False,
+                             correlation=False, **kwargs):
     print(f'Plotting: {os.path.basename(os.path.dirname(results_folder))}.')
     os.makedirs(results_folder, exist_ok=True)
 
+    #--- Plot overlayed contours and average contour ---#
     # Choose first DTW matched template contour as template contour
     template_contour = analysis_file['template_contours'][0]
-
-    # Plot transformation fields and transformation results
-    for index, c in enumerate(analysis_file['measurement_datasets']):
-        # Extract arrays
-        matched_contour = analysis_file['measurement_contours'][index]
-        raw_data = analysis_file['measurement_datasets'][index]
-        matched_grid = analysis_file['measurement_grids'][index]
-        trafo_grid = analysis_file['measurement_trafo_grids'][index]
-
-        if verify_trafo:
-            cmap = 'viridis'  # Changes colour mapping to avoid confusion with real data
-            matched_grid = analysis_file['verification_grids'][index]
-            trafo_grid = analysis_file['verification_trafo_grids'][index]
-            raw_data = np.random.choice(np.linspace(1, 10, 10), size=matched_grid.shape[0])
-
-        # Plot trafo field and the original and transformed data grids
-        fig = plot_transformed_grid(matched_contour,
-                                    analysis_file['template_contours'][index],
-                                    raw_data,
-                                    matched_grid,
-                                    trafo_grid,
-                                    label=label,
-                                    cmap=cmap,
-                                    marker_size=marker_size,
-                                    vmin=vmin,
-                                    vmax=vmax,
-                                    mask=True)
-        output_path = os.path.join(results_folder, f'Transformed_{analysis_file['measurement_filenames'][index]}.png')
-        fig.savefig(output_path, dpi=300, bbox_inches='tight')
-        plt.close()
 
     # Plot all original contours and the averaged contour
     cont = analysis_file['measurement_contours']
@@ -58,28 +31,167 @@ def plot_brainfusion_results(analysis_file, results_folder, key_quant, label='',
     fig.savefig(output_path, dpi=300, bbox_inches='tight')
     plt.close()
 
-    # Plot averaged data map
-    fig = plot_average_map(analysis_file['measurement_interpolated_dataset'][key_quant],
-                           analysis_file['measurement_interpolated_grid'],
-                           template_contour,
-                           label=label,
-                           cmap=cmap,
-                           marker_size=marker_size,
-                           vmin=vmin,
-                           vmax=vmax,
-                           mask=True)
+    #--- Plot transformation fields and transformation results ---#
+    # Get extended interpolation grid
+    interpolated_grid = analysis_file["measurement_interpolated_grid"]
+    interpolated_grid_shape = tuple(analysis_file["measurement_interpolated_grid_shape"])
+    interpolated_avg_data = analysis_file['measurement_interpolated_dataset'][key_quant] if not correlation else None
 
-    output_path = os.path.join(results_folder, f'Averaged_Myelin_Maps.png')
-    fig.savefig(output_path, dpi=300, bbox_inches='tight')
-    plt.close()
+    # Transform into regular grid and matrix if image data
+    if image_dataset:
+        H, W = tuple(analysis_file["measurement_interpolated_grid_shape"])
+        interpolated_grid = interpolated_grid.reshape(H, W, 2)
+        interpolated_avg_data = analysis_file['measurement_interpolated_dataset'][key_quant].reshape(H, W)
+
+    for index, c in enumerate(analysis_file['measurement_datasets']):
+        # Extract arrays
+        matched_contour = analysis_file['measurement_contours'][index]
+        raw_data = analysis_file['measurement_datasets'][index]
+        matched_grid = analysis_file['measurement_grids'][index]
+        trafo_data = analysis_file['measurement_trafo_datasets'][index]
+        trafo_grid = analysis_file['measurement_trafo_grids'][index]
+
+        # Transform into regular grid and matrix if image data
+        if image_dataset:
+            h, w = tuple(analysis_file['measurement_grids_shape'][index])
+            matched_grid = matched_grid.reshape(h, w, 2)
+            raw_data = {key: value.reshape(h, w) for key, value in raw_data.items()}
+            trafo_grid = interpolated_grid
+            trafo_data = {key: value.reshape(H, W) for key, value in trafo_data.items()}
+
+        if verify_trafo:
+            cmap = 'viridis'  # Changes colour mapping to avoid confusion with real data
+            matched_grid = analysis_file['verification_grids'][index]
+            trafo_grid = analysis_file['verification_trafo_grids'][index]
+            raw_data = {key_quant: np.random.choice(np.linspace(1, 10, 10), size=matched_grid.shape[0])}
+
+        # Plot trafo field and the original and transformed data grids
+        fig = plot_transformed_grid(matched_contour,
+                                    analysis_file['template_contours'][index],
+                                    raw_data,
+                                    matched_grid,
+                                    trafo_grid,
+                                    affine_matrix=analysis_file['affine_matrices'][index],
+                                    key_quant=key_quant,
+                                    trafo_data=trafo_data,
+                                    cbar_label=cbar_label,
+                                    cmap=cmap,
+                                    marker_size=marker_size,
+                                    vmin=vmin,
+                                    vmax=vmax,
+                                    mask=mask)
+
+        output_path = os.path.join(results_folder, f'Transformed_{analysis_file['measurement_filenames'][index]}.png')
+        fig.savefig(output_path, dpi=300, bbox_inches='tight')
+        plt.close()
+
+        # Plot original grid on brightfield background image
+        if plot_background:
+            affine_matrix = analysis_file['affine_matrices'][index]
+            scale_matrix = analysis_file['scale_matrices'][index]
+            comp_matrix = scale_matrix @ affine_matrix
+            affine_trafo = AffineTransform(matrix=comp_matrix)
+            grid_trafo = affine_trafo(matched_grid)
+            contour_trafo = affine_trafo(matched_contour)
+
+            fig = plot_map_on_image(analysis_file['background_image'][index],
+                                    raw_data[key_quant],
+                                    grid_trafo,
+                                    contour_trafo,
+                                    scale=1,
+                                    label='',
+                                    cmap=cmap,
+                                    marker_size=marker_size / 50,
+                                    vmin=vmin,
+                                    vmax=vmax,
+                                    mask=True,
+                                    alpha=0.9)
+
+            output_path = os.path.join(results_folder,
+                                       f'Original_{analysis_file['measurement_filenames'][index]}.png')
+            fig.savefig(output_path, dpi=300, bbox_inches='tight')
+            plt.close()
+
+    if not correlation:
+        #--- Plot averaged data map ---#
+        fig = plot_average_map(interpolated_avg_data,
+                               interpolated_grid,
+                               template_contour,
+                               cbar_label=cbar_label,
+                               cmap=cmap,
+                               marker_size=marker_size,
+                               vmin=vmin,
+                               vmax=vmax,
+                               mask=mask)
+        output_path = os.path.join(results_folder, f'Averaged_Maps.svg')
+        fig.savefig(output_path, dpi=300, bbox_inches='tight')
+        plt.close()
+
+        # Save averaged data map as tif
+        H, W = tuple(analysis_file["measurement_interpolated_grid_shape"])
+        regular_grid = analysis_file['measurement_interpolated_grid'].reshape(H, W, 2)
+        value_matrix = analysis_file['measurement_interpolated_dataset'][key_quant].reshape(H, W)
+
+        # Save as .tif
+        matrix, _, (pixel_size_x, pixel_size_y) = plot_contour_on_image(value_matrix, regular_grid, template_contour,
+                                                                        cmap='grey', mask=True)
+        matrix_to_save = np.flipud(matrix)  # Flip vertically to match origin='lower' in imshow
+
+        # Save cropped image
+        output_path = os.path.join(results_folder, f'Averaged_Maps_Image.tif')
+        imwrite(output_path,
+                matrix_to_save.astype('float32'),
+                imagej=True,
+                resolution=(1e-6 / pixel_size_x, 1e-6 / pixel_size_y),
+                metadata={
+                    'unit': 'um',
+                    'axes': 'YX'
+                }
+                )
+
+        plt.close()
 
 
-def plot_transformed_grid(contour, template_contour, data, grid, trafo_grid, label='', cmap='afmhot', marker_size=30,
-                          vmin=None, vmax=None, mask=False):
+def plot_contours(template_contour, matched_contours):
+    fig, ax = plt.subplots(figsize=(8, 8))
+
+    for i, contour in enumerate(matched_contours):
+        # Plot the matched contours (only label the first one)
+        if i == 0:
+            ax.plot(contour[:, 0], contour[:, 1], color='grey', linestyle='-', linewidth=1.5, alpha=0.5,
+                     label='DTW Matched Contours')
+            ax.scatter(contour[0, 0], contour[0, 1], color='grey', s=25, label='Initial Coordinate')
+        else:
+            # No label for subsequent contours
+            ax.plot(contour[:, 0], contour[:, 1], color='grey', linestyle='-', linewidth=1.5, alpha=0.5)
+            ax.scatter(contour[0, 0], contour[0, 1], color='grey', s=25)
+
+    # Plot the averaged contour
+    ax.plot(template_contour[:, 0], template_contour[:, 1], color='blue', linestyle='--', linewidth=3,
+             label='Template Contour')
+    ax.scatter(template_contour[0, 0], template_contour[0, 1], color='blue', s=30, zorder=6,
+                label='Initial Tmp. Coordinate')
+
+    ax.axis('equal')
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.legend()
+
+    return fig
+
+
+def plot_transformed_grid(contour, template_contour, data, grid, trafo_grid, affine_matrix, key_quant, trafo_data=None,
+                          cbar_label='', cmap='afmhot', marker_size=30, vmin=None, vmax=None, mask=False):
+    # Compute vmin and vmax
+    values = data[key_quant]
+    vmin = np.nanmin(values) if vmin is None else vmin
+    vmax = np.nanmax(values) if vmax is None else vmax
+
     # Create subplots with three side-by-side plots
     fig, axes = plt.subplots(1, 3, figsize=(25, 7))
 
-    # DTW transformation field
+    # --- DTW transformation field ---#
+    # Plot contours
     axes[0].plot(contour[:, 0], contour[:, 1], c='grey', linestyle='-')
     axes[0].scatter(contour[:, 0], contour[:, 1], c='k', s=5)
     axes[0].plot(template_contour[:, 0], template_contour[:, 1], 'blue', linestyle='-')
@@ -91,66 +203,114 @@ def plot_transformed_grid(contour, template_contour, data, grid, trafo_grid, lab
                    angles='xy', scale_units='xy', scale=1, color='r', alpha=0.8, zorder=3)
 
     axes[0].set_title('DTW with Curvature Penalty', fontsize=20)
-    axes[0].axis('equal')
-    axes[0].set_xticks([])
-    axes[0].set_yticks([])
 
-    # Original contour and grid
+    # --- Original and transformed contours ---#
     axes[1].plot(contour[:, 0], contour[:, 1], color='grey', linestyle='-', linewidth=3,
                  label='Original Contour')
 
-    # Set mask
-    if mask:
-        mask_1 = mask_contour(contour, grid)
-        mask_tmp = data >= 0
-        mask_1 = mask_1 & mask_tmp
-    else:
-        mask_1 = np.full(grid.shape[1], True)
-
-    # Plot original data points
-    axes[1].scatter(np.ma.masked_where(~mask_1, grid[:, 0]),
-                    np.ma.masked_where(~mask_1, grid[:, 1]),
-                    c=data,
-                    cmap=cmap,
-                    s=marker_size,
-                    vmin=vmin,
-                    vmax=vmax)
-
-    axes[1].set_title('Original Data Map', fontsize=20)
-    axes[1].axis('equal')
-    axes[1].set_xticks([])
-    axes[1].set_yticks([])
-
-    # Transformed contour and grid
+    # Transformed contour
     axes[2].plot(template_contour[:, 0], template_contour[:, 1], color='blue', linestyle='--', linewidth=4,
                  label='Template Contour')
 
-    # Set mask
-    if mask:
-        mask_2 = mask_contour(template_contour, trafo_grid)
-        mask_tmp = data >= 0
-        mask_2 = mask_2 & mask_tmp
+    # Plot image data
+    if len(grid.shape) == 3:
+        # Original Grid
+        N, M, _ = grid.shape
+        coords = grid.reshape(-1, 2)
+
+        # Test which points are inside contour
+        if mask:
+            mask1 = mask_contour(contour, coords)
+            mask1 = mask1.reshape(N, M)
+            for key, value in data.items():
+                value = value.astype(float)
+                value[~mask1] = np.nan
+                data[key] = value
+
+        # Get extent from grid
+        x_min = np.min(grid[:, :, 0])
+        x_max = np.max(grid[:, :, 0])
+        y_min = np.min(grid[:, :, 1])
+        y_max = np.max(grid[:, :, 1])
+        extent = [x_min, x_max, y_min, y_max]
+
+        axes[1].imshow(data[key_quant], extent=extent, origin='lower', cmap=cmap)
+
+        # Transformed Grid
+        N, M, _ = trafo_grid.shape
+        coords = trafo_grid.reshape(-1, 2)
+
+        # Test which points are inside contour
+        if mask:
+            mask2 = mask_contour(template_contour, coords)
+            mask2 = mask2.reshape(N, M)
+            for key, value in trafo_data.items():
+                value = value.astype(float)
+                value[~mask2] = np.nan
+                trafo_data[key] = value
+
+        # Get extent from grid
+        x_min = np.min(trafo_grid[:, :, 0])
+        x_max = np.max(trafo_grid[:, :, 0])
+        y_min = np.min(trafo_grid[:, :, 1])
+        y_max = np.max(trafo_grid[:, :, 1])
+        extent = [x_min, x_max, y_min, y_max]
+
+        # Plot
+        trafo_map = axes[2].imshow(trafo_data[key_quant], extent=extent, origin='lower', cmap=cmap)
+
+    # Plot scattered data
     else:
-        mask_2 = np.full(trafo_grid.shape[0], True)
+        # Set mask
+        if mask:
+            mask_1 = mask_contour(contour, grid)
+        else:
+            mask_1 = np.full(grid.shape[0], True)
 
-    # Plot transformed data points
-    trafo_map = axes[2].scatter(np.ma.masked_where(~mask_2, trafo_grid[:, 0]),
-                                np.ma.masked_where(~mask_2, trafo_grid[:, 1]),
-                                c=data,
-                                cmap=cmap,
-                                s=marker_size,
-                                vmin=vmin,
-                                vmax=vmax)
+        # Plot original data points
+        axes[1].scatter(np.ma.masked_where(~mask_1, grid[:, 0]),
+                        np.ma.masked_where(~mask_1, grid[:, 1]),
+                        c=data[key_quant],
+                        cmap=cmap,
+                        s=marker_size,
+                        vmin=vmin,
+                        vmax=vmax)
 
+        # Transformed contour and grid
+        axes[2].plot(template_contour[:, 0], template_contour[:, 1], color='blue', linestyle='--', linewidth=4,
+                     label='Template Contour')
+
+        # Set mask
+        if mask:
+            mask_2 = mask_contour(template_contour, trafo_grid)
+        else:
+            mask_2 = np.full(trafo_grid.shape[0], True)
+
+        # Plot transformed data points
+        trafo_map = axes[2].scatter(np.ma.masked_where(~mask_2, trafo_grid[:, 0]),
+                                    np.ma.masked_where(~mask_2, trafo_grid[:, 1]),
+                                    c=data[key_quant],
+                                    cmap=cmap,
+                                    s=marker_size,
+                                    vmin=vmin,
+                                    vmax=vmax)
+
+    axes[1].set_title('Original Data Map', fontsize=20)
     axes[2].set_title('Transformed Data Map', fontsize=20)
-    axes[2].axis('equal')
-    axes[2].set_xticks([])
-    axes[2].set_yticks([])
 
     # Add colorbar
     cbar = fig.colorbar(trafo_map, ax=axes[2])
     cbar.ax.tick_params(labelsize=20)
-    cbar.set_label(label, size=30)
+    cbar.set_label(cbar_label, size=30)
+
+    # --- Auto-zoom with 10% margin ---
+    x_lim, y_lim = get_zoom_limits(template_contour)
+    for ax in axes:
+        ax.set_xlim(x_lim)
+        ax.set_ylim(y_lim)
+        ax.set_aspect('equal')  # Ensures same unit length in x and y
+        ax.set_xticks([])
+        ax.set_yticks([])
 
     # Adjust layout to avoid overlap
     plt.tight_layout()
@@ -158,78 +318,109 @@ def plot_transformed_grid(contour, template_contour, data, grid, trafo_grid, lab
     return fig
 
 
-def plot_contours(template_contour, matched_contours):
-    fig = plt.figure(figsize=(8, 8))
-
-    for i, contour in enumerate(matched_contours):
-        # Plot the matched contours (only label the first one)
-        if i == 0:
-            plt.plot(contour[:, 0], contour[:, 1], color='grey', linestyle='-', linewidth=1.5, alpha=0.5,
-                     label='DTW Matched Contours')
-            plt.scatter(contour[0, 0], contour[0, 1], color='grey', s=25, label='Initial Coordinate')
-        else:
-            # No label for subsequent contours
-            plt.plot(contour[:, 0], contour[:, 1], color='grey', linestyle='-', linewidth=1.5, alpha=0.5)
-            plt.scatter(contour[0, 0], contour[0, 1], color='grey', s=25)
-
-    # Plot the averaged contour
-    plt.plot(template_contour[:, 0], template_contour[:, 1], color='blue', linestyle='--', linewidth=3,
-             label='Template Contour')
-    plt.scatter(template_contour[0, 0], template_contour[0, 1], color='blue', s=30, zorder=6,
-                label='Initial Tmp. Coordinate')
-
-    plt.axis('equal')
-    plt.xticks([])
-    plt.yticks([])
-    plt.legend()
-
-    return fig
-
-
-def plot_average_map(data_avg, grid_avg, template_contour, label='', cmap='viridis', marker_size=15, vmin=None,
+def plot_average_map(data_avg, grid_avg, template_contour, cbar_label='', cmap='viridis', marker_size=15, vmin=None,
                      vmax=None, mask=True):
-    # Create plot
-    fig = plt.figure(figsize=(8, 8))
+    # Compute vmin and vmax
+    data_avg = data_avg.astype(float)
+    vmin = np.nanmin(data_avg) if vmin is None else vmin
+    vmax = np.nanmax(data_avg) if vmax is None else vmax
+
+    fig, ax = plt.subplots(figsize=(8, 8))
 
     # Plot template contour
-    plt.plot(template_contour[:, 0], template_contour[:, 1], 'b--', linewidth=5, label='Template Contour')
+    ax.plot(template_contour[:, 0], template_contour[:, 1], 'b--', linewidth=5, label='Template Contour')
 
-    # Set mask
-    if mask is True:
-        mask = mask_contour(template_contour, grid_avg)
-        mask_tmp = data_avg >= 0
-        mask = mask & mask_tmp
+    # Plot image data
+    if grid_avg.ndim == 3:
+        N, M, _ = grid_avg.shape
+        coords = grid_avg.reshape(-1, 2)
+
+        if mask:
+            mask1 = mask_contour(template_contour, coords)
+            mask1 = mask1.reshape(N, M)
+            data_avg[~mask1] = np.nan
+
+        # Get extent from grid
+        x_min = np.min(grid_avg[:, :, 0])
+        x_max = np.max(grid_avg[:, :, 0])
+        y_min = np.min(grid_avg[:, :, 1])
+        y_max = np.max(grid_avg[:, :, 1])
+        extent = [x_min, x_max, y_min, y_max]
+
+        heatmap = ax.imshow(data_avg, extent=extent, origin='lower', cmap=cmap, vmin=vmin, vmax=vmax)
+
+    # Plot scattered data
     else:
-        mask = np.full(grid_avg.shape[0], True)
+        if mask:
+            mask_values = mask_contour(template_contour, grid_avg)
+        else:
+            mask_values = np.full(grid_avg.shape[0], True)
 
-    # Plot averaged data
-    heatmap = plt.scatter(np.ma.masked_where(~mask, grid_avg[:, 0]),
-                          np.ma.masked_where(~mask, grid_avg[:, 1]),
-                          c=data_avg,
-                          cmap=cmap,
-                          s=marker_size / 20,
-                          marker='s',
-                          alpha=1,
-                          vmin=vmin,
-                          vmax=vmax)
+        heatmap = ax.scatter(
+            np.ma.masked_where(~mask_values, grid_avg[:, 0]),
+            np.ma.masked_where(~mask_values, grid_avg[:, 1]),
+            c=data_avg, cmap=cmap, s=marker_size, marker='s', vmin=vmin, vmax=vmax
+        )
 
-    plt.axis('equal')
-    plt.xticks([])
-    plt.yticks([])
-
-    # Add colorbar
-    cbar = fig.colorbar(heatmap)
+    # Colorbar settings
+    cbar = fig.colorbar(heatmap, ax=ax)
     cbar.ax.tick_params(labelsize=15)
-    cbar.set_label(label, size=20)
+    cbar.set_label(cbar_label, size=20)
 
-    # Adjust layout to avoid overlap
+    # --- Auto-zoom with 10% margin ---
+    x_lim, y_lim = get_zoom_limits(template_contour)
+    ax.set_xlim(x_lim)
+    ax.set_ylim(y_lim)
+    ax.set_aspect('equal')  # Ensures same unit length in x and y
+    ax.set_xticks([])
+    ax.set_yticks([])
+
     plt.tight_layout()
 
     return fig
 
 
-def plot_map_on_image(img, data, grid, contour, folder_name, scale=1, label='', cmap='viridis', marker_size=15,
-                      vmin=None, vmax=None, log=False, mask=False, alpha=0.9):
+def plot_contour_on_image(img, grid, contour, cmap='grey', mask=False):
+    """
+    Normalize a matrix to [0, max] and convert to uint8 or uint16 and add contour to image.
+    """
+    img = img.astype(float)
+    N, M = img.shape
+    coords = grid.reshape(-1, 2)
+
+    # Test which points are inside contour
+    if mask:
+        mask = mask_contour(contour, coords)
+        mask = mask.reshape(N, M)
+        img[~mask] = np.nan
+
+    # Get extent from grid
+    x_min = np.min(grid[:, :, 0])
+    x_max = np.max(grid[:, :, 0])
+    y_min = np.min(grid[:, :, 1])
+    y_max = np.max(grid[:, :, 1])
+    extent = [x_min, x_max, y_min, y_max]
+
+    # Compute pixel-to-µm scale
+    x_extent_um = x_max - x_min  # Width in µm
+    y_extent_um = y_max - y_min  # Height in µm
+
+    pixel_size_x = x_extent_um / M  # µm per pixel in X
+    pixel_size_y = y_extent_um / N  # µm per pixel in Y
+
+    # Plot
+    fig, ax = plt.subplots()
+    ax.imshow(img, extent=extent, origin='lower', cmap=cmap)
+    ax.plot(contour[:, 0], contour[:, 1], 'b--', linewidth=2)
+    ax.set_aspect('equal')
+    ax.set_xticks([])
+    ax.set_yticks([])
+
+    return img, fig, (pixel_size_x, pixel_size_y)
+
+
+def plot_map_on_image(img, data, grid, contour, scale=1, label='', cmap='viridis', marker_size=15,
+                      vmin=None, vmax=None, mask=False, alpha=0.9):
     # Create figure and axis
     fig, ax = plt.subplots()
 
@@ -239,12 +430,6 @@ def plot_map_on_image(img, data, grid, contour, folder_name, scale=1, label='', 
 
     # Plot background image and heatmap
     ax.imshow(img, cmap='gray', aspect='equal', origin='lower', extent=[0, width_in_mu, 0, height_in_mu], alpha=alpha)
-
-    # Use logarithmic normalization
-    if vmin or vmin:
-        norm = None
-    else:
-        norm = mcolors.LogNorm() if log else None
 
     if mask:
         mask = mask_contour(contour, grid)
@@ -260,10 +445,8 @@ def plot_map_on_image(img, data, grid, contour, folder_name, scale=1, label='', 
                          edgecolors='none',
                          alpha=1,
                          vmin=vmin,
-                         vmax=vmax,
-                         norm=norm)
+                         vmax=vmax)
 
-    ax.set_title(f'{folder_name}', fontsize=10)
     ax.set_xticks([])
     ax.set_yticks([])
 
@@ -501,25 +684,25 @@ def plot_cumulative(analysis_file, raw_key, projected=True, results_folder=None,
     plt.show()
 
 
-def plot_correlation_with_radii(afm_grid, myelin_grid, afm_contour, radii, title=""):
+def plot_correlation_with_radii(sparse_grid, dense_grid, contour, radii, results_folder=None, title=""):
     """
-    Plots AFM and myelin grids with circles of given radius around AFM points.
+    Plots sparse and dense grids with circles of given radius around sparse points.
     """
     # Create plot
     fig, ax = plt.subplots(figsize=(8, 8))
 
-    # Plot Myelin Points
-    ax.scatter(myelin_grid[:, 0], myelin_grid[:, 1], s=10, color='grey', label="Myelin Points", alpha=0.5)
+    # Plot dense Points
+    ax.scatter(dense_grid[:, 0], dense_grid[:, 1], s=10, color='grey', label="Dense Points", alpha=0.5)
 
-    # Plot AFM Points
-    ax.scatter(afm_grid[:, 0], afm_grid[:, 1], s=15, color='blue', label="AFM Points")
+    # Plot sparse Points
+    ax.scatter(sparse_grid[:, 0], sparse_grid[:, 1], s=15, color='blue', label="Sparse Points")
 
-    # Plot AFM Contour (Black Line)
-    ax.plot(afm_contour[:, 0], afm_contour[:, 1], 'k-', linewidth=2, label="AFM Contour")
+    # Plot contour
+    ax.plot(contour[:, 0], contour[:, 1], 'k-', linewidth=2, label="Contour")
 
-    # Draw Circles Around AFM Points
-    for i, afm_point in enumerate(afm_grid):
-        circle = patches.Circle(afm_point, radii[i], color='blue', alpha=0.2)
+    # Draw Circles Around sparse Points
+    for i, sparse_point in enumerate(sparse_grid):
+        circle = patches.Circle(sparse_point, radii[i], color='blue', alpha=0.2)
         ax.add_patch(circle)
 
     # Labels and Legend
@@ -529,8 +712,88 @@ def plot_correlation_with_radii(afm_grid, myelin_grid, afm_contour, radii, title
     # ax.legend(loc="lower left", fontsize=15)
     ax.set_aspect('equal')
 
+    if isinstance(results_folder, str):
+        save_path = os.path.join(results_folder, f'CorrelationAnalysis.png')
+        os.makedirs(results_folder, exist_ok=True)
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.show()
+
+    return fig
+
+
+def plot_correlation_masks(sparse_grid, sparse_data, dense_data, contour, results_folder=None):
+    """
+    Plots sparse and dense grids next to each other with color-coded values.
+    Supports boolean or numeric data.
+    """
+    fig, axs = plt.subplots(1, 2, figsize=(16, 8))
+
+    # Detect if data is boolean
+    is_sparse_bool = sparse_data.dtype == bool or np.array_equal(sparse_data, sparse_data.astype(bool))
+    is_dense_bool = dense_data.dtype == bool or np.array_equal(dense_data, dense_data.astype(bool))
+
+    # Define discrete colormap for booleans
+    bool_cmap = mcolors.ListedColormap(['black', 'red'])
+    bool_norm = mcolors.BoundaryNorm([-.5, 0.5, 1.5], bool_cmap.N)
+
+    # Sparse points
+    if is_sparse_bool:
+        sc1 = axs[0].scatter(sparse_grid[:, 0], sparse_grid[:, 1], c=sparse_data.astype(int),
+                             cmap=bool_cmap, norm=bool_norm, s=100, marker='s')
+    else:
+        sc1 = axs[0].scatter(sparse_grid[:, 0], sparse_grid[:, 1], c=sparse_data, cmap='grey', s=100, marker='s')
+        plt.colorbar(sc1, ax=axs[0], orientation='vertical', label='Value')
+
+    axs[0].plot(contour[:, 0], contour[:, 1], 'k-', linewidth=2, label="Contour")
+    axs[0].set_title("Sparse Data")
+    axs[0].set_aspect('equal')
+    axs[0].set_xticks([])
+    axs[0].set_yticks([])
+
+    # Dense points
+    if is_dense_bool:
+        sc2 = axs[1].scatter(sparse_grid[:, 0], sparse_grid[:, 1], c=dense_data.astype(int),
+                             cmap=bool_cmap, norm=bool_norm, s=100, marker='s')
+    else:
+        sc2 = axs[1].scatter(sparse_grid[:, 0], sparse_grid[:, 1], c=dense_data, cmap='hot', s=100, marker='s')
+        plt.colorbar(sc2, ax=axs[1], orientation='vertical', label='Value')
+
+    axs[1].plot(contour[:, 0], contour[:, 1], 'k-', linewidth=2, label="Contour")
+    axs[1].set_title("Dense Data")
+    axs[1].set_aspect('equal')
+    axs[1].set_xticks([])
+    axs[1].set_yticks([])
+
+    if results_folder:
+        import os
+        os.makedirs(results_folder, exist_ok=True)
+        save_path = os.path.join(results_folder, "correlation_masks.png")
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+
     plt.show()
     return fig
+
+
+def get_zoom_limits(contour, margin_fraction=0.1):
+    """
+    Calculates x and y limits for a plot to ensure equal aspect ratio and a margin around the contour.
+    """
+    x_min, x_max = contour[:, 0].min(), contour[:, 0].max()
+    y_min, y_max = contour[:, 1].min(), contour[:, 1].max()
+
+    x_range = x_max - x_min
+    y_range = y_max - y_min
+    max_range = max(x_range, y_range)
+    margin = margin_fraction * max_range
+
+    x_mid = (x_max + x_min) / 2
+    y_mid = (y_max + y_min) / 2
+
+    x_lim = (x_mid - max_range / 2 - margin, x_mid + max_range / 2 + margin)
+    y_lim = (y_mid - max_range / 2 - margin, y_mid + max_range / 2 + margin)
+
+    return x_lim, y_lim
+
 
 
 def format_p_value(p):

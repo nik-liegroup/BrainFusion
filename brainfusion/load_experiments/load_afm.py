@@ -1,34 +1,35 @@
 import os
+
 import numpy as np
 from PIL import Image
 import pandas as pd
 import re
+from skimage.transform import AffineTransform, estimate_transform
 from brainfusion._io import read_parquet_file, get_roi_from_txt
 
 
-def load_batchforce_all(base_path, afm_variables, data_filename, key_point_filename, rot_axis_filename,
-                        grid_conv_filename, boundary_filename, sampling_size, **kwargs):
+def load_batchforce_all(base_path, afm_variables, batchforce_filename, key_point_filename, rot_axis_filename,
+                        grid_conv_filename, boundary_filename, **kwargs):
     """
     Load multiple batchforce experiments in a directory.
     """
-    filenames, grids, scales, datasets, contours, points, axes, bg_images_list = [], [], [], [], [], [], [], []
+    filenames, grids, scale_matrices, datasets, contours, points, axes, bg_images_list = [], [], [], [], [], [], [], []
     for folder_name in os.listdir(base_path):
         folder_path = os.path.join(base_path, folder_name)
         if os.path.isdir(folder_path) and ('#' in folder_name):
             # Load data from experiment folder
-            grid, afm_scale, dataset, contour, point, axis, background_image = load_batchforce_single(
+            grid, scale_matrix, dataset, contour, point, axis, background_image = load_batchforce_single(
                 folder_path,
                 afm_variables=afm_variables,
-                data_filename=data_filename,
+                batchforce_filename=batchforce_filename,
                 key_point_filename=key_point_filename,
                 rot_axis_filename=rot_axis_filename,
                 grid_conv_filename=grid_conv_filename,
-                boundary_filename=boundary_filename,
-                sampling_size=sampling_size)
+                boundary_filename=boundary_filename)
 
             # Save imported data
             grids.append(grid)
-            scales.append(afm_scale)
+            scale_matrices.append(scale_matrix)
             datasets.append(dataset)
             contours.append(contour)
             points.append(point)
@@ -37,7 +38,8 @@ def load_batchforce_all(base_path, afm_variables, data_filename, key_point_filen
             bg_images_list.append(background_image)
 
     results = {"grids": grids,
-               "scales": scales,
+               "reg_grid_dims": "None",
+               "scales": scale_matrices,
                "datasets": datasets,
                "contours": contours,
                "points": points,
@@ -48,43 +50,54 @@ def load_batchforce_all(base_path, afm_variables, data_filename, key_point_filen
     return results
 
 
-def load_batchforce_single(folder_path, afm_variables, data_filename='data.csv', key_point_filename="None",
+def load_batchforce_single(folder_path, afm_variables, batchforce_filename='data.csv', key_point_filename="None",
                            rot_axis_filename="None", grid_conv_filename='GridInversionMatrix.csv',
-                           boundary_filename='brain_outline', sampling_size="None"):
+                           boundary_filename='brain_outline', stage_image_angle=-90):
     """
     Load an AFM experiment analysed with the batchforce Matlab library and the outline coordinates.
     """
     # Load the AFM analysis file
-    data_path = os.path.join(folder_path, 'region analysis', data_filename)
+    data_path = os.path.join(folder_path, 'region analysis', batchforce_filename)
     assert os.path.exists(data_path), f'The given path does not point to a AFM analysis file: {data_path}'
 
     # Get filetype extension
-    extension = os.path.splitext(data_filename)[1]
+    extension = os.path.splitext(batchforce_filename)[1]
     if extension == '.mat':
-        raise ValueError(f"Importing {extension} files is not implemented yet, use writetable(data, data.csv) in Matlab")
+        raise ValueError(f"Importing {extension} files is not implemented yet, use writetable(data, 'data.csv') in Matlab")
     elif extension == '.csv':
         data = pd.read_csv(data_path)
         afm_data = {i: np.array(data[i]) for i in afm_variables}
     else:
         raise ValueError(f"{extension} files containing AFM analysis data are not supported!")
 
-    # Extract grid coordinates
+    # Extract image coordinates
     afm_grid = np.stack((np.array(data['x_image']), np.array(data['y_image'])), axis=-1)
 
-    # Extract transformation matrix to scale to µm
+    # Load transformation matrix to scale to stage coordinates (to µm)
     grid_vars_path = os.path.join(folder_path, grid_conv_filename)
     assert os.path.exists(grid_vars_path), f'The given path does not point to a grid conversion variables file: {grid_vars_path}'
 
     # Get filetype extension
-    extension = os.path.splitext(data_filename)[1]
+    extension = os.path.splitext(batchforce_filename)[1]
     if extension == '.mat':
-        raise ValueError(f"Importing {extension} files is not implemented yet, use writematrix(M, 'GridInversionMatrix.csv ')"
-                         f"in Matlab")
+        raise ValueError(f"Importing {extension} files is not implemented yet, use writematrix([M [r; s]; 0 0 1],"
+                         f"'GridInversionMatrix.csv') in Matlab to save full 3x3 conversion matrix")
     elif extension == '.csv':
-        df = pd.read_csv(grid_vars_path, header=None)
-        afm_scale_matrix = df.to_numpy()
+        df = pd.read_csv(grid_vars_path, header=None, sep=',')
+        afm_scale_matrix = df.to_numpy()  # Transforms from stage coordinates to image coordinates
     else:
-        raise ValueError(f"{extension} files containing AFM analysis data are not supported!")
+        print(f"{extension} files containing AFM analysis data are not supported! Estimating transformation matrix.")
+        afm_grid_stage = np.stack((np.array(data['x']), np.array(data['y'])), axis=-1)
+        afm_scale_matrix = estimate_transform('affine', afm_grid_stage, afm_grid).params
+
+    # Rotate stage coordinates to preserves the grid orientation in relation to image
+    theta = np.radians(stage_image_angle)
+    rotation_matrix = np.array([
+        [np.cos(theta), -np.sin(theta), 0],
+        [np.sin(theta), np.cos(theta), 0],
+        [0, 0, 1]
+    ])
+    afm_scale_matrix = afm_scale_matrix @ rotation_matrix
 
     # Load background image
     img_path = os.path.join(folder_path, 'Pics', 'calibration', 'overview.tif')
@@ -112,8 +125,16 @@ def load_batchforce_single(folder_path, afm_variables, data_filename='data.csv',
         raise ValueError(f"No matching contour was found for {folder_path}\n!"
                          f"Make sure filename is of type: '<boundary_filename>_OriRight.txt' or"
                          f" '<boundary_filename>_OriLeft.txt'")
+
+    # ToDo: Implement
     point = None
     axis = None
+
+    # Transform coordinates from image to micro meter
+    inv_matrix = np.linalg.inv(afm_scale_matrix)
+    aff = AffineTransform(matrix=inv_matrix)
+    afm_grid = aff(afm_grid)
+    contour = aff(contour)
 
     return afm_grid, afm_scale_matrix, afm_data, contour, point, axis, img
 
@@ -223,10 +244,10 @@ def load_sc_afm_myelin(folder_path, boundary_filename, key_point_filename=None, 
     keypoints = [afm_keypoint] + myelin_keypoints
     axes = [afm_axis] + myelin_axes
 
-    scales = "None"
+    scale_matrices = "None"
 
     results = {"grids": grids,
-               "scales": scales,
+               "scales": scale_matrices,
                "datasets": datasets,
                "contours": contours,
                "points": keypoints,

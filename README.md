@@ -1,6 +1,18 @@
-# AFM and Brillouin Data Analysis
+# BrainFusion: Average tissue boundaries to create global contour and merge measurement points to new shape.
 
-Python package for transforming measurement grids (AFM, Brillouin, in situ HCR images, ...) defined on similar shapes to a common frame. Contour paths enclosing the shape geometries are aligned using DTW boundary matching with a curvature penalty. The transformation between contours is modelled with radial basis functions (thin plate splines) and applied to the grid coordinates within the contour. Measurement data can be averaged by interpolation to a common regular grid or using a Gaussian Mixture Model to find clusters. This can be used to cross-correlate multiple averaged maps from different measurement modalities.
+Did you ever wonder, how an average frog brain looks like?
+Consider five embryonic brains from different animals, no brain is exactly like the other and this of course also applies to its shape.
+Using this Python package, a global tissue shape can be calculated by averaging the outlines of individual brains.
+Given imaging data (e.g. local mRNA expression) or gridded spatial maps (e.g. local tissue stiffness) for the single brains, these can additionally be transformed to the new global shape.
+Therefore, paths enclosing the shapes are aligned using DTW boundary matching with an adjustable curvature penalty.
+The transformation between contours is modelled via radial basis functions and applied to the grid coordinates within the contour.
+
+This concept is of course applicable to all different sorts of tissues and enables the extraction of general patterns found in the measurement data.
+Measurement data can for example be averaged after interpolation to a common regular grid or using a Gaussian Mixture Model to find clusters.
+
+This makes spatial cross-correlations of any arbitrary measurement signal easily possible!
+
+[![codecov](https://codecov.io/gh/nik-liegroup/BrainFusion/branch/main/graph/badge.svg)](https://codecov.io/gh/nik-liegroup/BrainFusion)
 
 ## Table of Contents
 
