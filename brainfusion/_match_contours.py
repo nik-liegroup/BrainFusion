@@ -5,6 +5,8 @@ import scipy.ndimage as ndi
 from skimage.transform import AffineTransform
 from typing import List, Tuple
 from collections import defaultdict
+from numpy.linalg import svd
+from brainfusion._dtw import dtw_with_curvature_penalty, segmented_contour_dtw
 
 
 def interpolate_contour(contour: np.ndarray, num_points: int) -> np.ndarray:
@@ -346,7 +348,7 @@ def get_contour_orientation(contour: np.ndarray) -> str:
     return 'clockwise' if signed_area < 0 else 'counterclockwise'
 
 
-def boundary_match_contours(contours: List[np.ndarray], template_index: int = 0, curvature: float = 0.5) ->(
+def boundary_match_contours(contours: List[np.ndarray], template_index: int = 0, curvature: float = 0.5) -> (
         Tuple)[List[np.ndarray], List[np.ndarray]]:
     """
     Align a list of contours to a reference template using dynamic time warping (DTW) with a curvature-based penalty.
@@ -377,142 +379,9 @@ def boundary_match_contours(contours: List[np.ndarray], template_index: int = 0,
     dtw_contours, dtw_tmp_contours = [], []
 
     for i, contour in enumerate(contours):
-        contour_dtw, contour_template_dtw = dtw_with_curvature_penalty(contour, contours[template_index],
-                                                                       base_lambda_curvature=curvature)
+        contour_dtw, contour_template_dtw = segmented_contour_dtw(contour, contours[template_index],
+                                                                  dtw_curvature=curvature)
         dtw_contours.append(contour_dtw)
         dtw_tmp_contours.append(contour_template_dtw)
 
     return dtw_contours, dtw_tmp_contours
-
-
-def dtw_with_curvature_penalty(contour1: np.ndarray, contour2: np.ndarray, base_lambda_curvature: float = 0.5,
-                               alpha: float = 0.05) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Align two 2D contours using Dynamic Time Warping (DTW) with a curvature-based penalty.
-
-    This function computes a soft point-to-point alignment between `contour1` and `contour2` using DTW.
-    The cost function includes both spatial distance and a curvature mismatch penalty derived from
-    Curvature Scale Space (CSS) representations.
-
-    Parameters
-    ----------
-    contour1 : np.ndarray of shape (N, 2)
-        First contour to be aligned (reference).
-    contour2 : np.ndarray of shape (M, 2)
-        Second contour to be matched against.
-    base_lambda_curvature : float, optional (keyword-only)
-        Weighting factor for curvature mismatch penalty in the DTW cost function.
-    alpha : float, optional (keyword-only)
-        Smoothing factor for Gaussian kernel used in CSS curvature calculation, proportional to arc length.
-
-    Returns
-    -------
-    warped_contour1 : np.ndarray of shape (K, 2)
-        Subsampled or repeated version of `contour1` that participated in the alignment.
-    warped_contour2 : np.ndarray of shape (K, 2)
-        Aligned and averaged version of `contour2` matched to `warped_contour1`.
-
-    Notes
-    -----
-    - Curvature is computed using a Gaussian scale proportional to local arc length.
-    - The resulting aligned points may contain duplicates or be averaged where `contour2` maps multiple points to the same location.
-    """
-    if not isinstance(contour1, np.ndarray) or contour1.ndim != 2 or contour1.shape[1] != 2:
-        raise ValueError("contour1 must be a (N, 2) numpy array")
-    if not isinstance(contour2, np.ndarray) or contour2.ndim != 2 or contour2.shape[1] != 2:
-        raise ValueError("contour2 must be a (N, 2) numpy array")
-
-    eps = 1e-10
-
-    def compute_contour_length(contour):
-        """Compute total contour length as sum of segment distances."""
-        return np.sum(np.linalg.norm(np.diff(contour, axis=0), axis=1))
-
-    def gaussian_smooth_contour(contour, sigma):
-        """Smooth contour using Gaussian filter."""
-        smoothed_x = ndi.gaussian_filter1d(contour[:, 0], sigma, mode='wrap')
-        smoothed_y = ndi.gaussian_filter1d(contour[:, 1], sigma, mode='wrap')
-        return np.column_stack((smoothed_x, smoothed_y))
-
-    def compute_css_curvature(contour, sigma):
-        """Compute curvature at a given scale using smoothed contours."""
-        smoothed_contour = gaussian_smooth_contour(contour, sigma)
-
-        dx = np.gradient(smoothed_contour[:, 0])
-        dy = np.gradient(smoothed_contour[:, 1])
-        ddx = np.gradient(dx)
-        ddy = np.gradient(dy)
-
-        curvature = (dx * ddy - dy * ddx) / (dx ** 2 + dy ** 2 + eps) ** (3 / 2)
-        return curvature
-
-    # Compute normalized sigma based on contour length
-    len1, len2 = compute_contour_length(contour1), compute_contour_length(contour2)
-    sigma1 = alpha * (len1 / len(contour1))
-    sigma2 = alpha * (len2 / len(contour2))
-
-    n, m = len(contour1), len(contour2)
-
-    # Compute curvature at adaptive scales
-    curvatures1 = compute_css_curvature(contour1, sigma1)
-    curvatures2 = compute_css_curvature(contour2, sigma2)
-
-    # Normalize lambda_curvature dynamically
-    spatial_dists = [np.linalg.norm(contour1[i] - contour2[j]) for i in range(n) for j in range(m)]
-    curvature_diffs = [np.abs(curvatures1[i] - curvatures2[j]) for i in range(n) for j in range(m)]
-
-    median_spatial = np.median(spatial_dists)
-    median_curvature = np.median(curvature_diffs)
-
-    lambda_curvature = base_lambda_curvature * (median_spatial / (median_curvature + eps))
-
-    def cost_function(i, j):
-        """Cost function incorporating spatial distance and CSS-based curvature penalty."""
-        p1, p2 = contour1[i], contour2[j]
-        spatial_dist = np.linalg.norm(p1 - p2)
-        curvature_penalty = lambda_curvature * np.abs(curvatures1[i] - curvatures2[j])
-        return spatial_dist ** 2 + curvature_penalty
-
-    # Initialize DP matrix
-    dtw_matrix = np.full((n + 1, m + 1), np.inf)
-    dtw_matrix[0, 0] = 0
-
-    # Compute DTW
-    for i in range(1, n + 1):
-        for j in range(1, m + 1):
-            cost = cost_function(i - 1, j - 1)
-            dtw_matrix[i, j] = cost + min(dtw_matrix[i - 1, j],  # Insertion
-                                          dtw_matrix[i, j - 1],  # Deletion
-                                          dtw_matrix[i - 1, j - 1])  # Match
-
-    # Backtrack to find the optimal path
-    i, j = n, m
-    path = []
-    while i > 0 and j > 0:
-        path.append((i - 1, j - 1))
-        step = np.argmin([dtw_matrix[i - 1, j], dtw_matrix[i, j - 1], dtw_matrix[i - 1, j - 1]])
-        if step == 0:
-            i -= 1  # Move up
-        elif step == 1:
-            j -= 1  # Move left
-        else:
-            i -= 1  # Move diagonally
-            j -= 1
-
-    path.reverse()
-
-    idx1, idx2 = np.array(list(zip(*path)))
-
-    # Dictionary to store values corresponding to idx1
-    contour2_mapping = defaultdict(list)
-
-    # Store values of contour2 based on alignment
-    for i1, i2 in zip(idx1, idx2):
-        contour2_mapping[i1].append(contour2[i2])  # Store actual contour2 values, not indices
-
-    # Compute averaged values
-    idx1_unique = np.array(list(contour2_mapping.keys()))
-    contour2_averaged = np.array(
-        [np.mean(values, axis=0) for values in contour2_mapping.values()])  # Averaging the points
-
-    return contour1[idx1_unique], contour2_averaged

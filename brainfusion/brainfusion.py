@@ -46,7 +46,7 @@ def brain_fusion(grids, datasets, contours, scales, contour_template="average", 
         Averaging method across transformed datasets. Options: "Mean", "Median", "Sum", "GMM".
     outline_averaging : str, default='star_domain'
         Method used to average contours when template is "average".
-    smooth : float or 'auto', default='auto'
+    smooth : float, 'auto' or 'weighted', default='auto'
         RBF interpolation smoothing factor for non-rigid transformation.
     curvature : float, default=0.5
         DTW matching penalty for curvature deviation in boundary alignment.
@@ -232,8 +232,7 @@ def fuse_boundaries(template, grids, datasets, contours, points, axes, contour_i
 
 
 def fuse_grids(measurement_grids, ext_grid, measurement_datasets, template_contours, measurement_contours,
-               smooth='auto',
-               **kwargs):
+               smooth='auto', **kwargs):
     # Create regular test grids for verifying correct transformation
     verification_grids = [regular_grid_on_bbox(c) for c in measurement_contours]
 

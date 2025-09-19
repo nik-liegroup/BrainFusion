@@ -382,13 +382,13 @@ class TestDTWWithCurvaturePenalty:
 
     def test_identical_shapes(self):
         contour = self.generate_circle(n_points=50)
-        warped1, warped2 = dtw_with_curvature_penalty(contour, contour)
+        warped1, warped2 = dtw_with_curvature_penalty(contour, contour, np.zeros(len(contour)), np.zeros(len(contour)))
         np.testing.assert_allclose(warped1, warped2, atol=1e-6)
 
     def test_ellipse_to_circle(self):
         circle = self.generate_circle(n_points=60)
         ellipse = self.generate_ellipse(n_points=60)
-        warped1, warped2 = dtw_with_curvature_penalty(ellipse, circle)
+        warped1, warped2 = dtw_with_curvature_penalty(ellipse, circle,  np.zeros(len(ellipse)),  np.zeros(len(circle)))
         assert warped1.shape == warped2.shape
         assert warped1.shape[1] == 2
 
@@ -396,19 +396,19 @@ class TestDTWWithCurvaturePenalty:
         bad_input = np.array([[0, 0], [1]], dtype=object)  # Ragged array
         circle = self.generate_circle()
         with pytest.raises(ValueError, match="must be a \(N, 2\) numpy array"):
-            dtw_with_curvature_penalty(bad_input, circle)
+            dtw_with_curvature_penalty(bad_input, circle, np.zeros(len(circle)), np.zeros(len(circle)))
         with pytest.raises(ValueError, match="must be a \(N, 2\) numpy array"):
-            dtw_with_curvature_penalty(circle, bad_input)
+            dtw_with_curvature_penalty(circle, bad_input, np.zeros(len(circle)), np.zeros(len(circle)))
 
     def test_output_dimensions_match(self):
         contour1 = self.generate_circle(n_points=120)
         contour2 = self.generate_ellipse(n_points=80)
-        warped1, warped2 = dtw_with_curvature_penalty(contour1, contour2)
+        warped1, warped2 = dtw_with_curvature_penalty(contour1, contour2, np.zeros(len(contour1)), np.zeros(len(contour2)))
         assert warped1.shape == warped2.shape
         assert warped1.shape[1] == 2
 
     def test_extreme_curvature_weight(self):
         c1 = self.generate_circle()
         c2 = self.generate_ellipse()
-        warped1, warped2 = dtw_with_curvature_penalty(c1, c2, base_lambda_curvature=10.0)
+        warped1, warped2 = dtw_with_curvature_penalty(c1, c2, np.zeros(len(c1)), np.zeros(len(c2)), dtw_curvature=10.0)
         assert warped1.shape == warped2.shape

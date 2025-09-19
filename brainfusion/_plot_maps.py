@@ -15,7 +15,7 @@ plt.rcParams['svg.fonttype'] = 'none'
 
 def plot_brainfusion_results(analysis_file, results_folder, key_quant, image_dataset=False, cbar_label='', cmap='afmhot',
                              marker_size=20, mask=True, vmin=None, vmax=None, verify_trafo=False, plot_background=False,
-                             correlation=False, **kwargs):
+                             correlation=False, invert_y=False, **kwargs):
     print(f'Plotting: {os.path.basename(os.path.dirname(results_folder))}.')
     os.makedirs(results_folder, exist_ok=True)
 
@@ -26,7 +26,7 @@ def plot_brainfusion_results(analysis_file, results_folder, key_quant, image_dat
     # Plot all original contours and the averaged contour
     cont = analysis_file['measurement_contours']
     iterator = list(cont.values()) if type(cont) is dict else cont
-    fig = plot_contours(template_contour, iterator)
+    fig = plot_contours(template_contour, iterator, invert_y)
     output_path = os.path.join(results_folder, 'matched_contours.png')
     fig.savefig(output_path, dpi=300, bbox_inches='tight')
     plt.close()
@@ -71,7 +71,7 @@ def plot_brainfusion_results(analysis_file, results_folder, key_quant, image_dat
                                     raw_data,
                                     matched_grid,
                                     trafo_grid,
-                                    affine_matrix=analysis_file['affine_matrices'][index],
+                                    affine_matrix=analysis_file['affine_matrices'][index+1],  # ToDo: Check if this works properly!
                                     key_quant=key_quant,
                                     trafo_data=trafo_data,
                                     cbar_label=cbar_label,
@@ -79,7 +79,8 @@ def plot_brainfusion_results(analysis_file, results_folder, key_quant, image_dat
                                     marker_size=marker_size,
                                     vmin=vmin,
                                     vmax=vmax,
-                                    mask=mask)
+                                    mask=mask,
+                                    invert_y=invert_y)
 
         output_path = os.path.join(results_folder, f'Transformed_{analysis_file['measurement_filenames'][index]}.png')
         fig.savefig(output_path, dpi=300, bbox_inches='tight')
@@ -87,8 +88,8 @@ def plot_brainfusion_results(analysis_file, results_folder, key_quant, image_dat
 
         # Plot original grid on brightfield background image
         if plot_background:
-            affine_matrix = analysis_file['affine_matrices'][index]
-            scale_matrix = analysis_file['scale_matrices'][index]
+            affine_matrix = analysis_file['affine_matrices'][index+1]  # ToDo: Check if this works properly!
+            scale_matrix = analysis_file['scale_matrices'][index+1]  # ToDo: Check if this works properly!
             comp_matrix = scale_matrix @ affine_matrix
             affine_trafo = AffineTransform(matrix=comp_matrix)
             grid_trafo = affine_trafo(matched_grid)
@@ -122,20 +123,24 @@ def plot_brainfusion_results(analysis_file, results_folder, key_quant, image_dat
                                marker_size=marker_size,
                                vmin=vmin,
                                vmax=vmax,
-                               mask=mask)
-        output_path = os.path.join(results_folder, f'Averaged_Maps.svg')
-        fig.savefig(output_path, dpi=300, bbox_inches='tight')
+                               mask=mask,
+                               invert_y=invert_y)
+        output_path = os.path.join(results_folder, f'Averaged_Maps.png')
+        fig.savefig(output_path, dpi=300, bbox_inches=None)
         plt.close()
 
         # Save averaged data map as tif
         H, W = tuple(analysis_file["measurement_interpolated_grid_shape"])
+        H, W = int(H), int(W)
         regular_grid = analysis_file['measurement_interpolated_grid'].reshape(H, W, 2)
         value_matrix = analysis_file['measurement_interpolated_dataset'][key_quant].reshape(H, W)
 
         # Save as .tif
-        matrix, _, (pixel_size_x, pixel_size_y) = plot_contour_on_image(value_matrix, regular_grid, template_contour,
-                                                                        cmap='grey', mask=True)
-        matrix_to_save = np.flipud(matrix)  # Flip vertically to match origin='lower' in imshow
+        matrix_to_save, _, (pixel_size_x, pixel_size_y) = plot_contour_on_image(value_matrix, regular_grid, template_contour,
+                                                                        cmap='grey', mask=True, invert_y=invert_y)
+
+        if invert_y is False:
+            matrix_to_save = np.flipud(matrix_to_save)  # Flip vertically to match origin='lower' in imshow
 
         # Save cropped image
         output_path = os.path.join(results_folder, f'Averaged_Maps_Image.tif')
@@ -152,7 +157,7 @@ def plot_brainfusion_results(analysis_file, results_folder, key_quant, image_dat
         plt.close()
 
 
-def plot_contours(template_contour, matched_contours):
+def plot_contours(template_contour, matched_contours, invert_y=False):
     fig, ax = plt.subplots(figsize=(8, 8))
 
     for i, contour in enumerate(matched_contours):
@@ -177,11 +182,14 @@ def plot_contours(template_contour, matched_contours):
     ax.set_yticks([])
     ax.legend()
 
+    if invert_y:
+        ax.invert_yaxis()
+
     return fig
 
 
 def plot_transformed_grid(contour, template_contour, data, grid, trafo_grid, affine_matrix, key_quant, trafo_data=None,
-                          cbar_label='', cmap='afmhot', marker_size=30, vmin=None, vmax=None, mask=False):
+                          cbar_label='', cmap='afmhot', marker_size=30, vmin=None, vmax=None, mask=False, invert_y=False):
     # Compute vmin and vmax
     values = data[key_quant]
     vmin = np.nanmin(values) if vmin is None else vmin
@@ -194,7 +202,7 @@ def plot_transformed_grid(contour, template_contour, data, grid, trafo_grid, aff
     # Plot contours
     axes[0].plot(contour[:, 0], contour[:, 1], c='grey', linestyle='-')
     axes[0].scatter(contour[:, 0], contour[:, 1], c='k', s=5)
-    axes[0].plot(template_contour[:, 0], template_contour[:, 1], 'blue', linestyle='-')
+    axes[0].plot(template_contour[:, 0], template_contour[:, 1], color='blue', linestyle='-')
     axes[0].scatter(template_contour[:, 0], template_contour[:, 1], c='b', s=5)
 
     # Plot vectors between contours
@@ -206,11 +214,11 @@ def plot_transformed_grid(contour, template_contour, data, grid, trafo_grid, aff
 
     # --- Original and transformed contours ---#
     axes[1].plot(contour[:, 0], contour[:, 1], color='grey', linestyle='-', linewidth=3,
-                 label='Original Contour')
+                 label='Original Contour', alpha=0.75)
 
     # Transformed contour
-    axes[2].plot(template_contour[:, 0], template_contour[:, 1], color='blue', linestyle='--', linewidth=4,
-                 label='Template Contour')
+    axes[2].plot(template_contour[:, 0], template_contour[:, 1], color='blue', linestyle='-', linewidth=4,
+                 label='Template Contour', alpha=0.75)
 
     # Plot image data
     if len(grid.shape) == 3:
@@ -234,7 +242,8 @@ def plot_transformed_grid(contour, template_contour, data, grid, trafo_grid, aff
         y_max = np.max(grid[:, :, 1])
         extent = [x_min, x_max, y_min, y_max]
 
-        axes[1].imshow(data[key_quant], extent=extent, origin='lower', cmap=cmap)
+        axes[1].imshow(data[key_quant], extent=extent, origin='lower' if invert_y else 'upper', cmap=cmap,
+                       vmin=vmin, vmax=vmax)
 
         # Transformed Grid
         N, M, _ = trafo_grid.shape
@@ -276,10 +285,6 @@ def plot_transformed_grid(contour, template_contour, data, grid, trafo_grid, aff
                         vmin=vmin,
                         vmax=vmax)
 
-        # Transformed contour and grid
-        axes[2].plot(template_contour[:, 0], template_contour[:, 1], color='blue', linestyle='--', linewidth=4,
-                     label='Template Contour')
-
         # Set mask
         if mask:
             mask_2 = mask_contour(template_contour, trafo_grid)
@@ -311,6 +316,8 @@ def plot_transformed_grid(contour, template_contour, data, grid, trafo_grid, aff
         ax.set_aspect('equal')  # Ensures same unit length in x and y
         ax.set_xticks([])
         ax.set_yticks([])
+        if invert_y and len(grid.shape) != 3:  # for scatter/quiver panels
+            ax.invert_yaxis()
 
     # Adjust layout to avoid overlap
     plt.tight_layout()
@@ -319,7 +326,7 @@ def plot_transformed_grid(contour, template_contour, data, grid, trafo_grid, aff
 
 
 def plot_average_map(data_avg, grid_avg, template_contour, cbar_label='', cmap='viridis', marker_size=15, vmin=None,
-                     vmax=None, mask=True):
+                     vmax=None, mask=True, invert_y=False):
     # Compute vmin and vmax
     data_avg = data_avg.astype(float)
     vmin = np.nanmin(data_avg) if vmin is None else vmin
@@ -347,7 +354,8 @@ def plot_average_map(data_avg, grid_avg, template_contour, cbar_label='', cmap='
         y_max = np.max(grid_avg[:, :, 1])
         extent = [x_min, x_max, y_min, y_max]
 
-        heatmap = ax.imshow(data_avg, extent=extent, origin='lower', cmap=cmap, vmin=vmin, vmax=vmax)
+        heatmap = ax.imshow(data_avg, extent=extent, origin='lower' if invert_y else 'upper', cmap=cmap, vmin=vmin,
+                            vmax=vmax)
 
     # Plot scattered data
     else:
@@ -375,12 +383,15 @@ def plot_average_map(data_avg, grid_avg, template_contour, cbar_label='', cmap='
     ax.set_xticks([])
     ax.set_yticks([])
 
+    if invert_y and grid_avg.ndim != 3:
+        ax.invert_yaxis()
+
     plt.tight_layout()
 
     return fig
 
 
-def plot_contour_on_image(img, grid, contour, cmap='grey', mask=False):
+def plot_contour_on_image(img, grid, contour, cmap='grey', mask=False, invert_y=False):
     """
     Normalize a matrix to [0, max] and convert to uint8 or uint16 and add contour to image.
     """
@@ -410,7 +421,7 @@ def plot_contour_on_image(img, grid, contour, cmap='grey', mask=False):
 
     # Plot
     fig, ax = plt.subplots()
-    ax.imshow(img, extent=extent, origin='lower', cmap=cmap)
+    ax.imshow(img, extent=extent, origin='lower' if invert_y else 'upper', cmap=cmap)
     ax.plot(contour[:, 0], contour[:, 1], 'b--', linewidth=2)
     ax.set_aspect('equal')
     ax.set_xticks([])
@@ -682,6 +693,36 @@ def plot_cumulative(analysis_file, raw_key, projected=True, results_folder=None,
     os.makedirs(results_folder, exist_ok=True)
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
     plt.show()
+
+
+def plot_correlation_density(dense_data, sparse_data, y_label="Dense data", x_label="Sparse data", point_size=15,
+                             results_folder=None, results_name=None):
+    # Convert to arrays and normalise to max value
+    dense_data = np.asarray(dense_data)
+    sparse_data = np.asarray(sparse_data)
+
+    dense_data_norm = dense_data / dense_data.max()
+    sparse_data_norm = sparse_data / sparse_data.max()
+
+    # Create square plot
+    fig, ax = plt.subplots(figsize=(8, 8))
+    ax.scatter(sparse_data_norm, dense_data_norm, s=point_size, color='black', alpha=0.9)
+    ax.set_xlabel(x_label, fontsize=20)
+    ax.set_ylabel(y_label, fontsize=20)
+    ax.tick_params(labelsize=18)
+
+    # Set equal range and aspect
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.set_aspect('equal', adjustable='box')
+
+    if isinstance(results_folder, str) and isinstance(results_name, str):
+        os.makedirs(results_folder, exist_ok=True)
+        save_path = os.path.join(results_folder, f'{results_name}.png')
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+
+    plt.show()
+    return fig
 
 
 def plot_correlation_with_radii(sparse_grid, dense_grid, contour, radii, results_folder=None, title=""):

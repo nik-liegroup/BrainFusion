@@ -2,6 +2,7 @@ import numpy as np
 import os
 import h5py
 import pandas as pd
+import re
 
 
 def check_parameters(params_defined, params_loaded):
@@ -74,14 +75,22 @@ def write_dict_in_h5(h5file, group_path, dic):
                 for i, sub_dict in enumerate(item):
                     write_dict_in_h5(list_group, str(i), sub_dict)
 
-            elif all(isinstance(i, str) for i in item):
-                # Store list of strings using variable-length string type
+            elif all(isinstance(i, str) or i is None for i in item):
+                # Store list of strings or None as UTF-8 and mark None separately
                 dt = h5py.string_dtype(encoding="utf-8")
-                h5file.create_dataset(f"{group_path}/{key}", data=np.array(item, dtype=dt))
+                arr = np.array([("" if v is None else v) for v in item], dtype=dt)
+                ds = h5file.create_dataset(f"{group_path}/{key}", data=arr)
+                none_mask = [v is None for v in item]
+                ds.attrs["none_mask"] = np.array(none_mask, dtype=bool)
 
-            elif all(isinstance(i, (int, float, bool, np.integer, np.floating, np.bool_)) for i in item):
-                # Store list of numbers or booleans as a dataset
-                h5file.create_dataset(f"{group_path}/{key}", data=np.array(item, dtype=np.float64 if any(isinstance(i, float) for i in item) else np.int64))
+            elif all(isinstance(i, (int, float, bool, np.integer, np.floating, np.bool_)) or i is None for i in item):
+                # Store list of numbers/bools/None; represent None as NaN and mask separately
+                has_float = any(isinstance(i, float) for i in item if i is not None)
+                dtype = np.float64 if has_float else np.float64  # use float so we can NaN
+                arr = np.array([np.nan if v is None else v for v in item], dtype=dtype)
+                ds = h5file.create_dataset(f"{group_path}/{key}", data=arr)
+                none_mask = [v is None for v in item]
+                ds.attrs["none_mask"] = np.array(none_mask, dtype=bool)
 
             else:
                 raise ValueError(f"Unsupported list type in key '{key}': {type(item[0])}")
@@ -106,6 +115,12 @@ def write_dict_in_h5(h5file, group_path, dic):
         elif isinstance(item, (int, float)):
             # Store native Python numbers
             h5file.create_dataset(f"{group_path}/{key}", data=item)
+
+        elif item is None:
+            # Store a string dataset with an attribute marking it as Python None
+            dt = h5py.string_dtype(encoding="utf-8")
+            ds = h5file.create_dataset(f"{group_path}/{key}", data=np.array("", dtype=dt))
+            ds.attrs["py_none"] = True
 
         else:
             raise TypeError(f"Unsupported data type in key '{key}': {type(item)}")
@@ -135,20 +150,55 @@ def read_dict_from_h5(h5file, group_path='/'):
 
     for key, item in group.items():
         if isinstance(item, h5py.Group):
-            result[key] = read_dict_from_h5(h5file, f"{group_path}/{key}")
+            child_path = group_path.rstrip('/') + '/' + key
+            result[key] = read_dict_from_h5(h5file, child_path)
         else:
-            data = item[()]  # Read dataset normally
+            ds = item  # h5py.Dataset
 
-            # Convert 'measurement_filenames' to list
+            # Scalar None sentinel
+            if ds.attrs.get("py_none", False):
+                result[key] = None
+                continue
+
+            data = ds[()]  # read dataset
+
+            # List None sentinel (mask)
+            if "none_mask" in ds.attrs:
+                mask = ds.attrs["none_mask"].astype(bool)
+                seq = data.tolist() if isinstance(data, np.ndarray) else [data]
+                out = []
+                for v, m in zip(seq, mask):
+                    if m:
+                        out.append(None)
+                    else:
+                        if isinstance(v, (bytes, np.bytes_)):
+                            out.append(v.decode("utf-8"))
+                        elif isinstance(v, np.generic):
+                            out.append(v.item())
+                        else:
+                            out.append(v)
+                result[key] = out
+                continue
+
+            # General string decoding
+            if isinstance(data, bytes):
+                data = data.decode("utf-8")
+            elif isinstance(data, np.ndarray):
+                if data.dtype.kind == 'S':  # bytes strings
+                    data = [s.decode("utf-8") for s in data.tolist()]
+                elif data.dtype.kind == 'O':  # object, may contain bytes
+                    data = [s.decode("utf-8") if isinstance(s, (bytes, np.bytes_)) else s for s in data.tolist()]
+
+            # Special-case kept (optional; generic decoding above also handles it)
             if key == 'measurement_filenames' and isinstance(data, np.ndarray):
-                result[key] = [s.decode('utf-8') if isinstance(s, bytes) else s for s in data.tolist()]
-            else:
-                result[key] = data  # Keep as is for other cases
+                data = [s.decode('utf-8') if isinstance(s, (bytes, np.bytes_)) else s for s in data.tolist()]
 
-    # If all keys are numerical, convert dict to list
-    if all(k.isdigit() for k in result.keys()):
-        sorted_keys = sorted(result.keys(), key=int)  # Sort keys numerically
-        result = [result[k] for k in sorted_keys]  # Convert to list
+            result[key] = data
+
+    # If all keys are numeric, convert dict to list
+    if result and all(isinstance(k, str) and k.isdigit() for k in result.keys()):
+        sorted_keys = sorted(result.keys(), key=int)
+        result = [result[k] for k in sorted_keys]
 
     return result
 
@@ -180,7 +230,7 @@ def get_roi_from_txt(roi_path, delimiter='\t', skip=0):
         return None
 
 
-def read_parquet_file(path, image=False):
+def read_parquet_file(path, image=False, x_var='x_image', y_var='y_image', data_var='value_background_corrected'):
     """
     Reads in parquet files either as images in matrix format or as a Nx2 list of coordinates with the respective N values.
     """
@@ -190,25 +240,36 @@ def read_parquet_file(path, image=False):
         img = df.pivot(index="y", columns="x", values="value_orig").to_numpy()
         return img
     else:
-        grid = df[['x', 'y']].to_numpy()
-        data = df[['value_background_corrected']].to_numpy().ravel()
+        grid = df[[x_var, y_var]].to_numpy()
+        data = df[[data_var]].to_numpy().ravel()
         return grid, data
 
 
-def append_parquet_file(path, brainfusion_analysis):
+def append_parquet_file(base_path, brainfusion_analysis, salini=False):
     """
     Write brainfusion analysis file to parquet file.
     """
-    parquet_file_names = [filename + '_Merged_RAW_ch02_image_roi_linearised.parquet'
-                          for filename in brainfusion_analysis['measurement_filenames']]
-    for idx, file_name in enumerate(parquet_file_names):
-        parquet_file_path = os.path.join(path, file_name)
-        df = pd.read_parquet(parquet_file_path, engine='pyarrow')
-        trafo_grid = brainfusion_analysis['measurement_trafo_grids'][idx]
+    if salini is True:
+        for idx, _ in enumerate(brainfusion_analysis['template_contours']):
+            folder_name = brainfusion_analysis['measurement_filenames'][idx]
+            folder_path = os.path.join(base_path, folder_name)
+            parquet_name = re.sub(r"_(left|right)$", r"_afm_measurements_fortranslation_\1", folder_name)
+            parquet_path = os.path.join(base_path, folder_name, f"{parquet_name}.parquet")
 
-        # ToDo: REMOVE
-        trafo_grid = np.zeros((len(df['x_translated']), 2))
-        #
+            # Read
+            df = pd.read_parquet(parquet_path, engine='pyarrow')
+            trafo_grid = brainfusion_analysis['measurement_trafo_grids'][idx]
 
-        df['x_translated'], df['y_translated'] = trafo_grid[:, 0], trafo_grid[:, 1]
-        df.to_parquet(parquet_file_path.removesuffix(".parquet") + '_Trafo' + '.parquet', index=False, engine='pyarrow')
+            # Write
+            df['x_image_translated'], df['y_image_translated'] = trafo_grid[:, 0], trafo_grid[:, 1]
+            df.to_parquet(parquet_path.removesuffix(".parquet") + '_Trafo' + '.parquet', index=False,
+                          engine='pyarrow')
+
+    else:
+        parquet_file_names = [filename + '_Merged_RAW_ch02_image_roi_linearised.parquet'
+                              for filename in brainfusion_analysis['measurement_filenames']]
+        for idx, file_name in enumerate(parquet_file_names):
+            pass
+            #parquet_file_path = os.path.join(path, file_name)
+            #df['x_translated'], df['y_translated'] = trafo_grid[:, 0], trafo_grid[:, 1]
+            #df.to_parquet(parquet_file_path.removesuffix(".parquet") + '_Trafo' + '.parquet', index=False, engine='pyarrow')

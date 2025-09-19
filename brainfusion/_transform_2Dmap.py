@@ -1,5 +1,6 @@
 import numpy as np
 from scipy.interpolate import Rbf
+from scipy.interpolate import RBFInterpolator
 from tqdm import tqdm
 from scipy.spatial import cKDTree, distance_matrix
 import numbers
@@ -22,7 +23,7 @@ def transform_grid2contour(original_contour: np.ndarray, deformed_contour: np.nd
         Grid points inside or around the original contour to be transformed.
     test_grid : np.ndarray of shape (K, 2)
         Additional grid points to be transformed (e.g., for validation).
-    smooth : float or 'auto', default='auto'
+    smooth : float, 'auto' or 'weighted', default='auto'
         Smoothing parameter for RBF interpolation. If 'auto', a default heuristic is used.
     progress : str, optional
         Suffix to append to tqdm progress bar description.
@@ -45,10 +46,10 @@ def transform_grid2contour(original_contour: np.ndarray, deformed_contour: np.nd
         if arr.ndim != 2 or arr.shape[1] != 2:
             raise ValueError(f"{name} must have shape (N, 2). Got {arr.shape}.")
 
-    if isinstance(smooth, str) and smooth != 'auto':
-        raise ValueError("`smooth` must be a float or 'auto'.")
+    if isinstance(smooth, str) and smooth not in ['auto', 'weighted']:
+        raise ValueError("`smooth` must be a float, 'auto' or 'weighted'.")
 
-    # Create RBF interpolators (forward and inverse)
+    # Create RBF interpolators
     rbf_x, rbf_y = create_rbf_interpolators(original_contour=original_contour,
                                             deformed_contour=deformed_contour,
                                             smooth=smooth)
@@ -71,7 +72,108 @@ def transform_grid2contour(original_contour: np.ndarray, deformed_contour: np.nd
 
 
 def create_rbf_interpolators(original_contour: np.ndarray, deformed_contour: np.ndarray, function: str = 'linear',
-                             smooth: Union[float, str] = 'auto') -> Tuple[Callable, Callable]:
+                             smooth: Union[float, str] = 'auto',
+) -> Tuple[Callable, Callable]:
+    """
+    Create RBF interpolators to map coordinates from original to deformed contour.
+
+    Parameters
+    ----------
+    original_contour : (N, 2) array
+        Points on the original contour (X, Y).
+    deformed_contour : (N, 2) array
+        Corresponding points on the deformed contour (X', Y').
+    function : str
+        Kernel type: {'multiquadric','inverse','gaussian','linear','cubic','quintic','thin_plate'}.
+        Mapped to RBFInterpolator's kernels.
+    smooth : float, 'auto' or 'weighted'
+        Global smoothing; 'auto' picks a small value from point spacing.
+        If 'weigthed', interpreted as per-point smoothing (larger devations = higher influence).
+
+    Returns
+    -------
+    rbf_x, rbf_y : Callable
+        Callables f(x, y) -> x' and f(x, y) -> y'.
+    """
+    # ToDo: Implement smooth bijective transformation to quickly invert for faster interpolation to regular grid
+    if not (isinstance(original_contour, np.ndarray) and isinstance(deformed_contour, np.ndarray)):
+        raise TypeError("Contours must be numpy arrays.")
+    if original_contour.shape != deformed_contour.shape or original_contour.shape[1] != 2:
+        raise ValueError("Contours must be of shape (N, 2) and match in size.")
+    if not isinstance(function, str):
+        raise TypeError("`function` must be a string.")
+
+    valid_functions = {'multiquadric', 'inverse_multiquadric', 'gaussian', 'linear', 'cubic', 'quintic', 'thin_plate_spline'}
+    if function not in valid_functions:
+        raise ValueError(f"`function` must be one of: {valid_functions}. Got '{function}'.")
+
+    P = np.asarray(original_contour, dtype=float)
+    Q = np.asarray(deformed_contour, dtype=float)
+    N = P.shape[0]
+
+    # Nearest-neighbour spacing (for auto smooth/epsilon)
+    D = distance_matrix(P, P)
+    np.fill_diagonal(D, np.inf)
+    nn = np.min(D, axis=1)
+    typical_spacing = float(np.mean(nn))
+    median_spacing = float(np.median(nn))
+
+    base_smooth = 1e-1
+    if isinstance(smooth, str):
+        if smooth == "auto":
+            smoothing = base_smooth * typical_spacing
+        elif smooth == "weighted":
+            U = Q - P
+            mag = np.linalg.norm(U, axis=1)
+            med = np.median(mag) if np.any(mag > 0) else 1.0
+            p = 4
+            weight = (mag / (med + 1e-12)) ** p
+            smoothing = (base_smooth * typical_spacing) / (1.0 + weight)
+        else:
+            raise TypeError('"smooth" must be a number, "auto", or "weighted".')
+    else:
+        smoothing = float(smooth)
+
+    # --- epsilon for Gaussian/MQ: epsilon = 1/length_scale ---
+    needs_epsilon = function in {"gaussian", "multiquadric", "inverse_multiquadric"}
+    if needs_epsilon:
+        length_scale = 1 * median_spacing  # ToDO: Implement length_scale_factor
+        epsilon = 1.0 / max(length_scale, 1e-12)
+    else:
+        epsilon = None
+
+        # Single 2D-valued interpolator
+        rbf = RBFInterpolator(
+            P, Q,
+            kernel=function,
+            smoothing=smoothing,
+            epsilon=epsilon,
+        )
+
+    # Vectorised wrappers
+    def _eval_xy(xq, yq):
+        xq_arr = np.asarray(xq, dtype=float)
+        yq_arr = np.asarray(yq, dtype=float)
+        if xq_arr.shape != yq_arr.shape:
+            raise ValueError("x and y must have the same shape.")
+        pts = np.column_stack([xq_arr.ravel(), yq_arr.ravel()])
+        out = rbf(pts).reshape(xq_arr.shape + (2,))
+        return out
+
+    def rbf_x(xq, yq):
+        out = _eval_xy(xq, yq)[..., 0]
+        return float(out) if np.isscalar(xq) and np.isscalar(yq) else out
+
+    def rbf_y(xq, yq):
+        out = _eval_xy(xq, yq)[..., 1]
+        return float(out) if np.isscalar(xq) and np.isscalar(yq) else out
+
+    return rbf_x, rbf_y
+
+
+def create_rbf_interpolators_legacy(original_contour: np.ndarray, deformed_contour: np.ndarray,
+                                    function: str = 'linear',
+                                    smooth: Union[float, str] = 'auto') -> Tuple[Callable, Callable]:
     """
    Create RBF interpolators to map coordinates from original to deformed contour.
 
@@ -203,6 +305,7 @@ def extend_grid(measurement_grids: List[np.ndarray], x_extend: float, y_extend: 
     # Take the median across all grids to determine global spacing
     x_median_spacing = np.median(x_spacings)
     y_median_spacing = np.median(y_spacings)
+    spac = np.mean([x_median_spacing, y_median_spacing])
 
     # Compute extension factor
     x_extend_factor = x_extend * (x_max - x_min)

@@ -1,5 +1,4 @@
 import os
-
 import numpy as np
 from PIL import Image
 import pandas as pd
@@ -254,5 +253,98 @@ def load_sc_afm_myelin(folder_path, boundary_filename, key_point_filename=None, 
                "axes": axes,
                "filenames": myelin_filenames,
                "bg_images": afm_image}
+
+    return results
+
+
+def load_salini_afm(base_path, boundary_filename, key_point_filename=None, rot_axis_filename=None,
+                    sampling_size=None, **kwargs):
+    """
+    Function to load AFM experiments analysed with the Matlab library 'batchforce'.
+    """
+    foldernames, grids, scale_matrices, datasets, contours, points, axes, bg_images_list = [], [], [], [], [], [], [], []
+
+    # Iterate over experiments
+    experiment_folders = [f for f in os.listdir(base_path) if f'#' in f]
+    for folder_name in experiment_folders:
+
+        # Get the experiment number from the folder name
+        match = re.search(r'#(\d+)', folder_name)
+        exp_num = int(match.group(1)) if match else None
+
+        # Load parquet data file
+        parquet_name = re.sub(r"_(left|right)$", r"_afm_measurements_fortranslation_\1", folder_name)
+        parquet_path = os.path.join(base_path, folder_name, f"{parquet_name}.parquet")
+        if os.path.exists(parquet_path):
+            grid, data = read_parquet_file(parquet_path, False, x_var='x_image', y_var='y_image', data_var="modulus")
+            dataset = {"modulus": data}
+        else:
+            grid, dataset = None, None
+
+        # Load contour file
+        contour_name = re.sub(r"_(left|right)$", fr"_{boundary_filename}_\1", folder_name)
+        contour_path = os.path.join(base_path, folder_name, f"{contour_name}.txt")
+        contour = get_roi_from_txt(contour_path, delimiter=',')
+
+        # Save imported data
+        foldernames.append(folder_name)
+        grids.append(grid)
+        datasets.append(dataset)
+        contours.append(contour)
+
+        # To make the boundary matching algorithm more robust, additional information like a landmark point similar on all
+        # contours and an axis used to align contours can be included
+        # Load keypoint
+        if key_point_filename != "None":
+            keypoint_name = re.sub(r"_(left|right)$", fr"_{key_point_filename}_\1", folder_name)
+            keypoint_path = os.path.join(base_path, folder_name, f"{keypoint_name}.txt")
+            keypoint = get_roi_from_txt(keypoint_path, delimiter=',')
+            keypoint = min(keypoint, key=lambda p: p[1])
+            points.append(keypoint)
+        else:
+            points.append(None)
+
+        # Load axis
+        if rot_axis_filename != "None":
+            axis_name = re.sub(r"_(left|right)$", fr"_{rot_axis_filename}_\1", folder_name)
+            axis_path = os.path.join(base_path, folder_name, f"{axis_name}.txt")
+            axis = get_roi_from_txt(axis_path, delimiter=',')
+            axes.append(axis)
+        else:
+            axes.append(None)
+
+    # Load target
+    folder_name = "Saliani_2019_mC6_left"
+    contour_name = re.sub(r"_(left|right)$", fr"_{boundary_filename}_\1", folder_name)
+    contour_path = os.path.join(base_path, folder_name, f"{contour_name}.txt")
+    target_contour = get_roi_from_txt(contour_path, delimiter=',')
+
+    keypoint_name = re.sub(r"_(left|right)$", fr"_{key_point_filename}_\1", folder_name)
+    keypoint_path = os.path.join(base_path, folder_name, f"{keypoint_name}.txt")
+    target_keypoint = get_roi_from_txt(keypoint_path, delimiter=',')
+
+    axis_name = re.sub(r"_(left|right)$", fr"_{rot_axis_filename}_\1", folder_name)
+    axis_path = os.path.join(base_path, folder_name, f"{axis_name}.txt")
+    target_axis = get_roi_from_txt(axis_path, delimiter=',')
+
+    # Use Salini atlas data as the first list item
+    grids = [None] + grids
+    datasets = [None] + datasets
+    contours = [target_contour] + contours
+    points = [target_keypoint] + points
+    axes = [target_axis] + axes
+    scale_matrices = None
+    bg_images_list = None
+    reg_grid_dims = None
+
+    results = {"grids": grids,
+               "reg_grid_dims": reg_grid_dims,
+               "scales": scale_matrices,
+               "datasets": datasets,
+               "contours": contours,
+               "points": points,
+               "axes": axes,
+               "filenames": foldernames,
+               "bg_images": bg_images_list}
 
     return results
