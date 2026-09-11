@@ -3,6 +3,9 @@ import os
 import h5py
 import pandas as pd
 import re
+from dataclasses import replace
+
+from brainfusion.sample import Sample
 
 
 def check_parameters(params_defined, params_loaded):
@@ -45,11 +48,8 @@ def export_analysis(path, analysis, params):
     with h5py.File(path, 'w') as h5file:
         write_dict_in_h5(h5file, '/', analysis)
 
-        # Save parameters as attributes
+        # Save parameters as attributes so they can be checked against on the next run
         for key, value in params.items():
-            if key == 'overwrite_analysis':
-                continue
-
             h5file.attrs[key] = value
 
     print(f"Results and parameters saved in {path}.")
@@ -63,11 +63,16 @@ def write_dict_in_h5(h5file, group_path, dic):
             write_dict_in_h5(h5file, f"{group_path}/{key}", item)
 
         elif isinstance(item, list):
-            if all(isinstance(i, np.ndarray) for i in item):
-                # Store list of arrays as a group of datasets
+            if all(isinstance(i, np.ndarray) or i is None for i in item):
+                # Store list of arrays (some entries may be None) as a group of datasets
                 list_group = h5file.create_group(f"{group_path}/{key}")
                 for i, arr in enumerate(item):
-                    list_group.create_dataset(str(i), data=arr)
+                    if arr is None:
+                        dt = h5py.string_dtype(encoding="utf-8")
+                        ds = list_group.create_dataset(str(i), data=np.array("", dtype=dt))
+                        ds.attrs["py_none"] = True
+                    else:
+                        list_group.create_dataset(str(i), data=arr)
 
             elif all(isinstance(i, dict) for i in item):
                 # Store list of dictionaries as a group with subgroups
@@ -84,10 +89,8 @@ def write_dict_in_h5(h5file, group_path, dic):
                 ds.attrs["none_mask"] = np.array(none_mask, dtype=bool)
 
             elif all(isinstance(i, (int, float, bool, np.integer, np.floating, np.bool_)) or i is None for i in item):
-                # Store list of numbers/bools/None; represent None as NaN and mask separately
-                has_float = any(isinstance(i, float) for i in item if i is not None)
-                dtype = np.float64 if has_float else np.float64  # use float so we can NaN
-                arr = np.array([np.nan if v is None else v for v in item], dtype=dtype)
+                # Store list of numbers/bools/None as floats so None can be represented as NaN
+                arr = np.array([np.nan if v is None else v for v in item], dtype=np.float64)
                 ds = h5file.create_dataset(f"{group_path}/{key}", data=arr)
                 none_mask = [v is None for v in item]
                 ds.attrs["none_mask"] = np.array(none_mask, dtype=bool)
@@ -136,8 +139,8 @@ def import_analysis(path):
         params = {}
         for key, value in h5file.attrs.items():
             if isinstance(value, np.generic):
-                value = value.item()   # Extract the scalar while keeping its NumPy type
-            elif key == 'afm_variables' and isinstance(value, np.ndarray):
+                value = value.item()  # Extract the scalar while keeping its Python type
+            elif isinstance(value, np.ndarray):
                 value = value.tolist()
             params[key] = value
 
@@ -188,10 +191,6 @@ def read_dict_from_h5(h5file, group_path='/'):
                     data = [s.decode("utf-8") for s in data.tolist()]
                 elif data.dtype.kind == 'O':  # object, may contain bytes
                     data = [s.decode("utf-8") if isinstance(s, (bytes, np.bytes_)) else s for s in data.tolist()]
-
-            # Special-case kept (optional; generic decoding above also handles it)
-            if key == 'measurement_filenames' and isinstance(data, np.ndarray):
-                data = [s.decode('utf-8') if isinstance(s, (bytes, np.bytes_)) else s for s in data.tolist()]
 
             result[key] = data
 
@@ -252,7 +251,6 @@ def append_parquet_file(base_path, brainfusion_analysis, salini=False):
     if salini is True:
         for idx, _ in enumerate(brainfusion_analysis['template_contours']):
             folder_name = brainfusion_analysis['measurement_filenames'][idx]
-            folder_path = os.path.join(base_path, folder_name)
             parquet_name = re.sub(r"_(left|right)$", r"_afm_measurements_fortranslation_\1", folder_name)
             parquet_path = os.path.join(base_path, folder_name, f"{parquet_name}.parquet")
 
@@ -273,3 +271,36 @@ def append_parquet_file(base_path, brainfusion_analysis, salini=False):
             #parquet_file_path = os.path.join(path, file_name)
             #df['x_translated'], df['y_translated'] = trafo_grid[:, 0], trafo_grid[:, 1]
             #df.to_parquet(parquet_file_path.removesuffix(".parquet") + '_Trafo' + '.parquet', index=False, engine='pyarrow')
+
+
+def parse_name(name: str, pattern: str, converters: dict = None) -> dict:
+    """
+    Extract named groups from `name` using a regex `pattern`.
+
+    Every lab names its experiment folders differently, so this is deliberately just a thin wrapper around a
+    regex with named groups: write one pattern matching your own naming convention and pass it to a loader's
+    `name_pattern` argument (or call this directly). `converters` optionally maps a group name to a function
+    applied to its (string) value, e.g. {"animal_number": int}. Groups without a converter are kept as strings.
+
+    Example
+    -------
+        >>> parse_name("#1_XenopusExposedBrain_Control_Stage37_20260729",
+        ...            r"#(?P<animal_number>\\d+)_.*?_(?P<condition>[A-Za-z]+)_Stage(?P<stage>\\d+)",
+        ...            converters={"animal_number": int, "stage": int})
+        {'animal_number': 1, 'condition': 'Control', 'stage': 37}
+    """
+    match = re.search(pattern, name)
+    if match is None:
+        raise ValueError(f"'{name}' does not match pattern '{pattern}'")
+
+    fields = match.groupdict()
+    for key, converter in (converters or {}).items():
+        fields[key] = converter(fields[key])
+    return fields
+
+
+def attach_metadata(samples, metadata: dict):
+    """Merge `metadata` into `.metadata` of one Sample or every Sample in a list, returning the updated copy/copies."""
+    if isinstance(samples, Sample):
+        return replace(samples, metadata={**samples.metadata, **metadata})
+    return [replace(sample, metadata={**sample.metadata, **metadata}) for sample in samples]
