@@ -5,9 +5,8 @@ import pandas as pd
 from PIL import Image
 from skimage.transform import AffineTransform, estimate_transform
 
-from brainfusion.io import get_roi_from_txt
+from brainfusion.io import get_roi_from_txt, attach_metadata, parse_name
 from brainfusion.load_experiments.base import iter_experiment_folders
-from brainfusion.metadata import attach_metadata, parse_name
 from brainfusion.sample import Sample
 
 
@@ -92,8 +91,8 @@ def load_batchforce_single(folder_path, afm_variables, batchforce_filename='data
 
     # Load contour, flipping it (and the grid/image) if it was defined on the left orientation
     contour_dir = os.path.join(folder_path, 'Pics', 'calibration')
-    left_path = os.path.join(contour_dir, f'{boundary_filename}_OriLeft.txt')
-    right_path = os.path.join(contour_dir, f'{boundary_filename}_OriRight.txt')
+    left_path = os.path.join(contour_dir, f'{boundary_filename}_oriLeft.txt')
+    right_path = os.path.join(contour_dir, f'{boundary_filename}_oriRight.txt')
 
     # Landmarks are just user-annotated points in a fixed order, so unlike the contour they don't need
     # separate left/right files - the orientation detected from the boundary file is enough to know whether

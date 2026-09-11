@@ -12,7 +12,7 @@ docstring) rather than the general AFM loader, which is why it's imported from `
 import os
 import re
 
-from brainfusion import load_parquet_images, correlate_afm_myelin, run_fusion, plot_brainfusion_results, \
+from brainfusion import load_parquet_samples, correlate_afm_myelin, run_fusion, plot_brainfusion_results, \
     parse_name, attach_metadata
 from brainfusion.load_experiments.base import iter_experiment_folders
 from brainfusion.load_experiments.other import load_sc_afm_single
@@ -48,7 +48,7 @@ for folder_name, folder_path in iter_experiment_folders(data_folder):
     # 'name' group below strips the '_Merged_RAW...' suffix so each sample gets a clean filename/identity.
     # Note: NAME_PATTERN describes the *folder* name, not these per-image filenames, so metadata is attached
     # separately below rather than passed as name_pattern to this loader.
-    myelin_samples = load_parquet_images(
+    myelin_samples = load_parquet_samples(
         folder_path,
         data_pattern=rf'(?P<name>ani{exp_num}_.*?)_Merged_RAW.*image_roi_linearised\.parquet$',
         contour_pattern=rf'ani{exp_num}_.*{re.escape(BOUNDARY_FILENAME)}\.txt$',

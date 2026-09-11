@@ -3,7 +3,7 @@ Loaders that don't (yet) fit the general "one function per method" shape the res
 around - usually because they're tied to one specific experiment's non-standard file layout, or bundle two
 concerns (loading + a specific templating choice) that the general system now handles via composition in the
 calling script instead (see `brainfusion.load_experiments.base.load_template_sample`,
-`brainfusion.load_experiments.base.load_parquet_images`).
+`brainfusion.load_experiments.load_parquet.load_parquet_samples`).
 
 Not re-exported from `brainfusion` or `brainfusion.load_experiments` - import directly from this module.
 """
@@ -14,9 +14,8 @@ import re
 import numpy as np
 import pandas as pd
 
-from brainfusion.io import get_roi_from_txt, read_parquet_file
+from brainfusion.io import get_roi_from_txt, read_parquet_file, attach_metadata, parse_name
 from brainfusion.load_experiments.base import iter_experiment_folders, load_template_sample
-from brainfusion.metadata import attach_metadata, parse_name
 from brainfusion.sample import Sample
 
 
@@ -28,8 +27,8 @@ def load_sc_afm_single(folder_path, boundary_filename, landmarks_filename=None, 
     This is a stopgap: it reads a plain 'data_FAKE_FOR_CODE.csv' rather than the standard batchforce layout
     that `load_batchforce_single` expects (see ToDo below) - fix that and this function can likely be
     replaced by `load_batchforce_single`. It exists separately from the myelin image loading (now
-    `brainfusion.load_experiments.base.load_parquet_images`) so the two can be composed as needed - e.g. one
-    AFM sample as the alignment template for that same animal's myelin sections.
+    `brainfusion.load_experiments.load_parquet.load_parquet_samples`) so the two can be composed as needed -
+    e.g. one AFM sample as the alignment template for that same animal's myelin sections.
 
     If `name_pattern` is given, it is matched against the folder's name and the extracted fields are stored
     in the sample's `.metadata` (see `brainfusion.metadata.parse_name`).
@@ -81,10 +80,6 @@ def load_salini_afm(base_path, boundary_filename, landmarks_filename=None, name_
     """
     samples = []
     for folder_name, folder_path in iter_experiment_folders(base_path):
-        # Get the experiment number from the folder name
-        match = re.search(r'#(\d+)', folder_name)
-        exp_num = int(match.group(1)) if match else None
-
         parquet_name = re.sub(r"_(left|right)$", r"_afm_measurements_fortranslation_\1", folder_name)
         parquet_path = os.path.join(folder_path, f"{parquet_name}.parquet")
         if os.path.exists(parquet_path):

@@ -5,7 +5,7 @@ Put the .tif images (and their *_BrainBoundary.txt outlines) under ./data/HCR_Da
 
 import os
 
-from brainfusion import load_microscopy_experiment, run_fusion, plot_brainfusion_results
+from brainfusion import load_microscopy_all, run_fusion, plot_brainfusion_results
 
 here = os.path.dirname(__file__)
 data_folder = os.path.join(here, "data", "HCR_Data")
@@ -22,7 +22,7 @@ FUSION_KWARGS = dict(
     outline_averaging="median",
 )
 
-samples = load_microscopy_experiment(data_folder, **LOADER_KWARGS)
+samples = load_microscopy_all(data_folder, **LOADER_KWARGS)
 analysis = run_fusion(samples, FUSION_KWARGS, results_path=os.path.join(data_folder, "results", "analysis.h5"),
                       overwrite=False)
 

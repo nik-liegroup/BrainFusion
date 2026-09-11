@@ -1,8 +1,10 @@
 import pytest
 import numpy as np
-from brainfusion.match_contours import (interpolate_contour, angle_between_lines, match_contour_with_ellipse,
-                                         match_contour_with_bbox, extract_bbox_corners, circularly_shift_contours,
-                                         get_contour_orientation, boundary_match_contours, dtw_with_curvature_penalty)
+from brainfusion.fusion.match_contours import (interpolate_contour, match_contour_with_ellipse,
+                                               match_contour_with_bbox, extract_bbox_corners,
+                                               circularly_shift_contours, get_contour_orientation,
+                                               boundary_match_contours)
+from brainfusion.fusion.dtw import dtw_with_curvature_penalty
 
 
 class TestInterpolateContour:
@@ -45,46 +47,6 @@ class TestInterpolateContour:
     def test_invalid_input_shape(self):
         with pytest.raises(ValueError, match="contour must be a 2D array of shape"):
             interpolate_contour(np.array([[0], [1]]), 10)
-
-
-class TestAngleBetweenLines:
-
-    def test_zero_angle(self):
-        axis = np.array([[0, 0], [1, 0]])
-        angle = angle_between_lines(axis, axis)
-        assert np.isclose(angle, 0.0)
-
-    def test_ninety_degrees_ccw(self):
-        source = np.array([[0, 0], [1, 0]])
-        target = np.array([[0, 0], [0, 1]])
-        angle = angle_between_lines(source, target)
-        assert np.isclose(angle, np.pi / 2)
-
-    def test_ninety_degrees_cw(self):
-        source = np.array([[0, 0], [1, 0]])
-        target = np.array([[0, 0], [0, -1]])
-        angle = angle_between_lines(source, target)
-        assert np.isclose(angle, -np.pi / 2)
-
-    def test_opposite_direction(self):
-        source = np.array([[0, 0], [1, 0]])
-        target = np.array([[0, 0], [-1, 0]])
-        angle = angle_between_lines(source, target)
-        assert np.isclose(angle, 0.0)
-
-    def test_input_validation_type(self):
-        with pytest.raises(ValueError, match="source_axis must be a numpy array"):
-            angle_between_lines([[0, 0], [1, 0]], np.array([[0, 0], [1, 1]]))
-
-    def test_input_validation_shape(self):
-        with pytest.raises(ValueError, match="target_axis must be a numpy array of shape"):
-            angle_between_lines(np.array([[0, 0], [1, 0]]), np.array([[0, 0]]))
-
-    def test_zero_length_vector(self):
-        source = np.array([[0, 0], [0, 0]])
-        target = np.array([[0, 0], [1, 1]])
-        with pytest.raises(ValueError, match="zero length"):
-            angle_between_lines(source, target)
 
 
 class TestMatchContourWithEllipse:

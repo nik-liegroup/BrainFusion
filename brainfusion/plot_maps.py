@@ -34,7 +34,6 @@ def plot_brainfusion_results(analysis_file, results_folder, key_quant, image_dat
     #--- Plot transformation fields and transformation results ---#
     # Get extended interpolation grid
     interpolated_grid = analysis_file["measurement_interpolated_grid"]
-    interpolated_grid_shape = tuple(analysis_file["measurement_interpolated_grid_shape"])
     interpolated_avg_data = analysis_file['measurement_interpolated_dataset'][key_quant] if not correlation else None
 
     # Transform into regular grid and matrix if image data
@@ -125,7 +124,7 @@ def plot_brainfusion_results(analysis_file, results_folder, key_quant, image_dat
                                vmax=vmax,
                                mask=mask,
                                invert_y=invert_y)
-        output_path = os.path.join(results_folder, f'Averaged_Maps.png')
+        output_path = os.path.join(results_folder, 'Averaged_Maps.png')
         fig.savefig(output_path, dpi=300, bbox_inches=None)
         plt.close()
 
@@ -143,7 +142,7 @@ def plot_brainfusion_results(analysis_file, results_folder, key_quant, image_dat
             matrix_to_save = np.flipud(matrix_to_save)  # Flip vertically to match origin='lower' in imshow
 
         # Save cropped image
-        output_path = os.path.join(results_folder, f'Averaged_Maps_Image.tif')
+        output_path = os.path.join(results_folder, 'Averaged_Maps_Image.tif')
         imwrite(output_path,
                 matrix_to_save.astype('float32'),
                 imagej=True,
@@ -754,7 +753,7 @@ def plot_correlation_with_radii(sparse_grid, dense_grid, contour, radii, results
     ax.set_aspect('equal')
 
     if isinstance(results_folder, str):
-        save_path = os.path.join(results_folder, f'CorrelationAnalysis.png')
+        save_path = os.path.join(results_folder, 'CorrelationAnalysis.png')
         os.makedirs(results_folder, exist_ok=True)
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
     plt.show()

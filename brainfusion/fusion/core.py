@@ -1,9 +1,12 @@
+import os
+
 import numpy as np
 
-from brainfusion.match_contours import interpolate_contour, align_contours, boundary_match_contours
-from brainfusion.average_contours import find_average_contour
-from brainfusion.transform_2Dmap import extend_grid, transform_grid2contour
-from brainfusion.interpolation import nearest_neighbour_interp, fit_coordinates_gmm
+from brainfusion.fusion.match_contours import interpolate_contour, align_contours, boundary_match_contours
+from brainfusion.fusion.average_contours import find_average_contour
+from brainfusion.fusion.transform_2Dmap import extend_grid, transform_grid2contour
+from brainfusion.fusion.interpolation import nearest_neighbour_interp, fit_coordinates_gmm
+from brainfusion.io import check_parameters, export_analysis, import_analysis
 from brainfusion.utils import regular_grid_on_bbox
 from brainfusion.sample import Sample, replace
 
@@ -97,6 +100,24 @@ def brain_fusion_correlation(samples: list[Sample], contour_template="average", 
         'measurement_interpolated_grid_shape': ext_grids_shape,
     })
     return structured_data
+
+
+def run_fusion(samples: list[Sample], fusion_kwargs: dict, results_path: str, overwrite: bool = False,
+              mode: str = "fusion") -> dict:
+    """
+    Run `brain_fusion` (or, if `mode="correlation"`, `brain_fusion_correlation`) on `samples` and cache the
+    result at `results_path`. If a cached result already exists and `overwrite` is False, it is loaded
+    instead and its stored parameters are compared against `fusion_kwargs`.
+    """
+    if overwrite or not os.path.exists(results_path):
+        fuse = brain_fusion_correlation if mode == "correlation" else brain_fusion
+        analysis = fuse(samples, **fusion_kwargs)
+        export_analysis(results_path, analysis, fusion_kwargs)
+    else:
+        analysis, loaded_kwargs = import_analysis(results_path)
+        check_parameters(fusion_kwargs, loaded_kwargs)
+
+    return analysis
 
 
 def fuse_boundaries(template, samples: list[Sample], contour_interp_n=200, outline_averaging='star_domain',

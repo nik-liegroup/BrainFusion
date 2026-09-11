@@ -1,9 +1,9 @@
 import pytest
 import numpy as np
 import matplotlib.pyplot as plt
-from brainfusion.average_contours import (find_average_contour, calculate_average_contour, is_star_domain,
-                                           calculate_error_distances, jaccard_distance, frechet_distance,
-                                           hausdorff_distance)
+from brainfusion.fusion.average_contours import (find_average_contour, calculate_average_contour, is_star_domain,
+                                                 calculate_error_distances, jaccard_distance, frechet_distance,
+                                                 hausdorff_distance)
 
 
 class TestFindAverageContour:

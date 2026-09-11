@@ -1,12 +1,9 @@
 import numpy as np
 import cv2
 from scipy.interpolate import interp1d
-import scipy.ndimage as ndi
 from skimage.transform import AffineTransform, estimate_transform
 from typing import List, Tuple
-from collections import defaultdict
-from numpy.linalg import svd
-from brainfusion.dtw import dtw_with_curvature_penalty, segmented_contour_dtw
+from brainfusion.fusion.dtw import segmented_contour_dtw
 
 
 def interpolate_contour(contour: np.ndarray, num_points: int) -> np.ndarray:
@@ -81,44 +78,6 @@ def align_contours(contour_list, grid_list, landmarks_list=None, template_index=
                                                  init_points=matched_points)
 
     return shifted_contours, matched_grids, affine_matrices
-
-
-def angle_between_lines(source_axis: np.ndarray, target_axis: np.ndarray) -> float:
-    """
-    Calculate the signed angle (in radians) from source_axis to target_axis in 2D.
-
-    Parameters:
-    - source_axis: (2, 2) array defining the first line (2 points, 2D)
-    - target_axis: (2, 2) array defining the second line (2 points, 2D)
-
-    Returns:
-    - signed_angle: float, angle in radians in range ]-π, π[
-    """
-    if not isinstance(source_axis, np.ndarray) or source_axis.shape != (2, 2):
-        raise ValueError("source_axis must be a numpy array of shape (2, 2)")
-    if not isinstance(target_axis, np.ndarray) or target_axis.shape != (2, 2):
-        raise ValueError("target_axis must be a numpy array of shape (2, 2)")
-
-    # Compute direction vectors
-    v1 = source_axis[1] - source_axis[0]  # Vector of first line
-    v2 = target_axis[1] - target_axis[0]  # Vector of second line
-
-    # Compute angle using dot product (magnitude)
-    dot_product = np.dot(v1, v2)
-    norm = np.linalg.norm(v1) * np.linalg.norm(v2)
-
-    if norm == 0:
-        raise ValueError("One or both line segments have zero length")
-
-    cos_theta = dot_product / norm
-    cos_theta = np.clip(cos_theta, -1.0, 1.0)
-    angle = np.arccos(cos_theta)  # Always 0 to π
-
-    # Compute the sign using the 2D cross product
-    cross_z = v1[0] * v2[1] - v1[1] * v2[0]
-    signed_angle = np.sign(cross_z) * angle
-
-    return signed_angle
 
 
 def match_contour_with_landmarks(a_points: np.ndarray, b_points: np.ndarray) -> AffineTransform:

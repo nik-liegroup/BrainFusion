@@ -109,7 +109,6 @@ def create_rbf_interpolators(original_contour: np.ndarray, deformed_contour: np.
 
     P = np.asarray(original_contour, dtype=float)
     Q = np.asarray(deformed_contour, dtype=float)
-    N = P.shape[0]
 
     # Nearest-neighbour spacing (for auto smooth/epsilon)
     D = distance_matrix(P, P)
@@ -305,7 +304,6 @@ def extend_grid(measurement_grids: List[np.ndarray], x_extend: float, y_extend: 
     # Take the median across all grids to determine global spacing
     x_median_spacing = np.median(x_spacings)
     y_median_spacing = np.median(y_spacings)
-    spac = np.mean([x_median_spacing, y_median_spacing])
 
     # Compute extension factor
     x_extend_factor = x_extend * (x_max - x_min)

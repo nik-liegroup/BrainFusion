@@ -1,6 +1,6 @@
 import pytest
 import numpy as np
-from brainfusion.transform_2Dmap import transform_grid2contour, create_rbf_interpolators, extend_grid
+from brainfusion.fusion.transform_2Dmap import transform_grid2contour, create_rbf_interpolators, extend_grid
 
 
 class TestTransformGrid2Contour:

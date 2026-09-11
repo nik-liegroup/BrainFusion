@@ -2,7 +2,7 @@ import numpy as np
 from typing import List, Tuple
 from scipy.spatial.distance import directed_hausdorff
 from shapely.geometry import Polygon, Point, LineString
-from brainfusion.match_contours import get_contour_orientation
+from brainfusion.fusion.match_contours import get_contour_orientation
 
 
 def find_average_contour(contours_list: List[np.ndarray], average: str = 'star_domain', star_bins: int = 360,

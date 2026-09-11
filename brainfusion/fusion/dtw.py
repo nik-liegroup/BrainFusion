@@ -1,11 +1,7 @@
 import numpy as np
-import cv2
-from scipy.interpolate import interp1d
 import scipy.ndimage as ndi
-from skimage.transform import AffineTransform
-from typing import List, Tuple
+from typing import Tuple
 from collections import defaultdict
-from numpy.linalg import svd
 
 
 def segmented_contour_dtw(contour1: np.ndarray, contour2: np.ndarray,
