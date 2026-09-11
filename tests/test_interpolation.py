@@ -1,6 +1,6 @@
 import pytest
 import numpy as np
-from brainfusion._interpolation import nearest_neighbour_interp
+from brainfusion.interpolation import nearest_neighbour_interp
 
 
 class TestNearestNeighbourInterp:

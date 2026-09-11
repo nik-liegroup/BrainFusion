@@ -1,95 +1,83 @@
 import os
+
 import numpy as np
-from PIL import Image
 import pandas as pd
-import re
+from PIL import Image
 from skimage.transform import AffineTransform, estimate_transform
-from brainfusion._io import read_parquet_file, get_roi_from_txt
+
+from brainfusion.io import get_roi_from_txt
+from brainfusion.load_experiments.base import iter_experiment_folders
+from brainfusion.metadata import attach_metadata, parse_name
+from brainfusion.sample import Sample
 
 
-def load_batchforce_all(base_path, afm_variables, batchforce_filename, key_point_filename, rot_axis_filename,
-                        grid_conv_filename, boundary_filename, **kwargs):
+def load_batchforce_all(base_path, afm_variables, batchforce_filename, grid_conv_filename, boundary_filename,
+                        landmarks_filename=None, name_pattern=None, name_converters=None,
+                        **kwargs) -> list[Sample]:
     """
-    Load multiple batchforce experiments in a directory.
+    Load every batchforce AFM experiment folder (name containing '#') found directly below `base_path`.
+
+    See `load_batchforce_single` for what `landmarks_filename` does. If `name_pattern` is given, it is
+    matched against each folder's name (see `brainfusion.metadata.parse_name`) and the extracted fields are
+    stored in the sample's `.metadata`, e.g. animal number, condition, stage.
     """
-    filenames, grids, scale_matrices, datasets, contours, points, axes, bg_images_list = [], [], [], [], [], [], [], []
-    for folder_name in os.listdir(base_path):
-        folder_path = os.path.join(base_path, folder_name)
-        if os.path.isdir(folder_path) and ('#' in folder_name):
-            # Load data from experiment folder
-            grid, scale_matrix, dataset, contour, point, axis, background_image = load_batchforce_single(
-                folder_path,
-                afm_variables=afm_variables,
-                batchforce_filename=batchforce_filename,
-                key_point_filename=key_point_filename,
-                rot_axis_filename=rot_axis_filename,
-                grid_conv_filename=grid_conv_filename,
-                boundary_filename=boundary_filename)
-
-            # Save imported data
-            grids.append(grid)
-            scale_matrices.append(scale_matrix)
-            datasets.append(dataset)
-            contours.append(contour)
-            points.append(point)
-            axes.append(axis)
-            filenames.append(folder_name)
-            bg_images_list.append(background_image)
-
-    results = {"grids": grids,
-               "reg_grid_dims": "None",
-               "scales": scale_matrices,
-               "datasets": datasets,
-               "contours": contours,
-               "points": points,
-               "axes": axes,
-               "filenames": filenames,
-               "bg_images": bg_images_list}
-
-    return results
+    samples = []
+    for folder_name, folder_path in iter_experiment_folders(base_path):
+        sample = load_batchforce_single(folder_path, afm_variables=afm_variables,
+                                        batchforce_filename=batchforce_filename,
+                                        grid_conv_filename=grid_conv_filename, boundary_filename=boundary_filename,
+                                        landmarks_filename=landmarks_filename)
+        if name_pattern is not None:
+            sample = attach_metadata(sample, parse_name(folder_name, name_pattern, name_converters))
+        samples.append(sample)
+    return samples
 
 
-def load_batchforce_single(folder_path, afm_variables, batchforce_filename='data.csv', key_point_filename="None",
-                           rot_axis_filename="None", grid_conv_filename='GridInversionMatrix.csv',
-                           boundary_filename='brain_outline', stage_image_angle=-90):
+def load_batchforce_single(folder_path, afm_variables, batchforce_filename='data.csv',
+                           grid_conv_filename='GridInversionMatrix.csv', boundary_filename='brain_outline',
+                           landmarks_filename=None, **kwargs) -> Sample:
     """
-    Load an AFM experiment analysed with the batchforce Matlab library and the outline coordinates.
+    Load a single AFM experiment analysed with the Matlab 'batchforce' library, together with its outline.
+
+    If `landmarks_filename` is given, looks for '<landmarks_filename>.txt' next to the outline and stores its
+    points as `Sample.landmarks`.
     """
+    folder_name = os.path.basename(os.path.normpath(folder_path))
+
     # Load the AFM analysis file
     data_path = os.path.join(folder_path, 'region analysis', batchforce_filename)
-    assert os.path.exists(data_path), f'The given path does not point to a AFM analysis file: {data_path}'
+    assert os.path.exists(data_path), f'The given path does not point to an AFM analysis file: {data_path}'
 
-    # Get filetype extension
-    extension = os.path.splitext(batchforce_filename)[1]
-    if extension == '.mat':
-        raise ValueError(f"Importing {extension} files is not implemented yet, use writetable(data, 'data.csv') in Matlab")
-    elif extension == '.csv':
+    data_extension = os.path.splitext(batchforce_filename)[1]
+    if data_extension == '.mat':
+        raise ValueError(f"Importing {data_extension} files is not implemented yet, use "
+                         f"writetable(data, 'data.csv') in Matlab")
+    elif data_extension == '.csv':
         data = pd.read_csv(data_path)
-        afm_data = {i: np.array(data[i]) for i in afm_variables}
+        afm_data = {variable: np.array(data[variable]) for variable in afm_variables}
     else:
-        raise ValueError(f"{extension} files containing AFM analysis data are not supported!")
+        raise ValueError(f"{data_extension} files containing AFM analysis data are not supported!")
 
     # Extract image coordinates
     afm_grid = np.stack((np.array(data['x_image']), np.array(data['y_image'])), axis=-1)
 
-    # Load transformation matrix to scale to stage coordinates (to µm)
+    # Load transformation matrix to scale to stage coordinates (to um)
     grid_vars_path = os.path.join(folder_path, grid_conv_filename)
-    assert os.path.exists(grid_vars_path), f'The given path does not point to a grid conversion variables file: {grid_vars_path}'
+    assert os.path.exists(grid_vars_path), (f'The given path does not point to a grid conversion variables file: '
+                                            f'{grid_vars_path}')
 
-    # Get filetype extension
-    extension = os.path.splitext(batchforce_filename)[1]
-    if extension == '.mat':
-        raise ValueError(f"Importing {extension} files is not implemented yet, use writematrix([M [r; s]; 0 0 1],"
-                         f"'GridInversionMatrix.csv') in Matlab to save full 3x3 conversion matrix")
-    elif extension == '.csv':
-        df = pd.read_csv(grid_vars_path, header=None, sep=',')
-        afm_scale_matrix = df.to_numpy()  # Transforms from stage coordinates to image coordinates
+    grid_extension = os.path.splitext(grid_conv_filename)[1]
+    if grid_extension == '.csv':
+        afm_scale_matrix = pd.read_csv(grid_vars_path, header=None, sep=',').to_numpy()
     else:
-        print(f"{extension} files containing AFM analysis data are not supported! Estimating transformation matrix.")
+        print(f"Importing {grid_extension} files is not implemented yet, use writematrix([M [r; s]; 0 0 1],"
+                         f"'GridInversionMatrix.csv') in Matlab to save the full 3x3 conversion matrix."
+             f"Estimating transformation matrix instead now.")
         afm_grid_stage = np.stack((np.array(data['x']), np.array(data['y'])), axis=-1)
         afm_scale_matrix = estimate_transform('affine', afm_grid_stage, afm_grid).params
 
-    # Rotate stage coordinates to preserves the grid orientation in relation to image
+    # Rotate stage coordinates to preserve the grid orientation in relation to the image
+    stage_image_angle = -90
     theta = np.radians(stage_image_angle)
     rotation_matrix = np.array([
         [np.cos(theta), -np.sin(theta), 0],
@@ -100,251 +88,43 @@ def load_batchforce_single(folder_path, afm_variables, batchforce_filename='data
 
     # Load background image
     img_path = os.path.join(folder_path, 'Pics', 'calibration', 'overview.tif')
-    img = Image.open(img_path).convert('L')
-    img = np.array(img)
+    bg_image = np.array(Image.open(img_path).convert('L'))
 
-    # Load contour
-    contour_path = os.path.join(folder_path, 'Pics', 'calibration')
+    # Load contour, flipping it (and the grid/image) if it was defined on the left orientation
+    contour_dir = os.path.join(folder_path, 'Pics', 'calibration')
+    left_path = os.path.join(contour_dir, f'{boundary_filename}_OriLeft.txt')
+    right_path = os.path.join(contour_dir, f'{boundary_filename}_OriRight.txt')
 
-    if os.path.exists(os.path.join(contour_path, f'{boundary_filename}_OriLeft.txt')):
-        # Flip BF image and AFM grid
-        img = np.flipud(img)
-        afm_grid[:, 1] = img.shape[0] - afm_grid[:, 1]
+    # Landmarks are just user-annotated points in a fixed order, so unlike the contour they don't need
+    # separate left/right files - the orientation detected from the boundary file is enough to know whether
+    # to flip them too.
+    landmarks = None
+    if landmarks_filename is not None:
+        landmarks_path = os.path.join(contour_dir, f'{landmarks_filename}.txt')
 
-        # Import contour and flip
-        roi_path = os.path.join(contour_path, f'{boundary_filename}_OriLeft.txt')
-        contour = get_roi_from_txt(roi_path)
-        contour[:, 1] = img.shape[0] - contour[:, 1]
-
-    elif os.path.exists(os.path.join(contour_path, f'{boundary_filename}_OriRight.txt')):
-        # Import contour
-        roi_path = os.path.join(contour_path, f'{boundary_filename}_OriRight.txt')
-        contour = get_roi_from_txt(roi_path)
+    if os.path.exists(left_path):
+        bg_image = np.flipud(bg_image)
+        afm_grid[:, 1] = bg_image.shape[0] - afm_grid[:, 1]
+        contour = get_roi_from_txt(left_path)
+        contour[:, 1] = bg_image.shape[0] - contour[:, 1]
+        if landmarks_filename is not None:
+            landmarks = get_roi_from_txt(landmarks_path)
+            landmarks[:, 1] = bg_image.shape[0] - landmarks[:, 1]
+    elif os.path.exists(right_path):
+        contour = get_roi_from_txt(right_path)
+        if landmarks_filename is not None:
+            landmarks = get_roi_from_txt(landmarks_path)
     else:
-        raise ValueError(f"No matching contour was found for {folder_path}\n!"
-                         f"Make sure filename is of type: '<boundary_filename>_OriRight.txt' or"
-                         f" '<boundary_filename>_OriLeft.txt'")
+        raise ValueError(f"No matching contour was found for {folder_path}!\n"
+                         f"Make sure filename is of type: '<boundary_filename>_OriRight.txt' or "
+                         f"'<boundary_filename>_OriLeft.txt'")
 
-    # ToDo: Implement
-    point = None
-    axis = None
-
-    # Transform coordinates from image to micro meter
-    inv_matrix = np.linalg.inv(afm_scale_matrix)
-    aff = AffineTransform(matrix=inv_matrix)
+    # Transform coordinates from image pixels to micrometers
+    aff = AffineTransform(matrix=np.linalg.inv(afm_scale_matrix))
     afm_grid = aff(afm_grid)
     contour = aff(contour)
+    if landmarks is not None:
+        landmarks = aff(landmarks)
 
-    return afm_grid, afm_scale_matrix, afm_data, contour, point, axis, img
-
-
-def load_sc_afm_myelin(folder_path, boundary_filename, key_point_filename=None, rot_axis_filename=None,
-                       sampling_size=None, **kwargs):
-    """
-    Function to load myelin images of multiple spinal cord sections and the corresponding AFM experiment analysed with
-    the Matlab library 'batchforce'.
-    """
-    # Get the experiment number from the folder name
-    folder_name = os.path.basename(os.path.normpath(folder_path))
-    match = re.search(r'#(\d+)', folder_name)
-    exp_num = int(match.group(1)) if match else None
-
-    # Load all myelin parquet filenames
-    myelin_i_filenames = [f for f in os.listdir(folder_path) if
-                          f'ani{exp_num}' in f and f.endswith("image_roi_linearised.parquet")]
-
-    # Import myelin images and pixel grid coordinates
-    myelin_grids, myelin_datasets, myelin_filenames = [], [], []
-    for filename in myelin_i_filenames:
-        myelin_filenames.append(re.match(r"^(.*?)(?=_Merged_RAW)", filename).group(1))
-        image_path = os.path.join(folder_path, filename)
-        myelin_grid, myelin_data = read_parquet_file(image_path, False)
-
-        # Randomly sample datasets for faster calculation
-        if type(sampling_size) is int:
-            print('Attention: Data sampling is activated to improve calculation time. Deactivate for proper analysis!')
-            sample_idx = np.random.choice(len(myelin_data), size=sampling_size, replace=False)
-            myelin_grid = np.stack((myelin_grid[:, 0][sample_idx], myelin_grid[:, 1][sample_idx]), axis=1)
-            myelin_data = myelin_data[sample_idx]
-
-        myelin_grids.append(myelin_grid)
-        myelin_datasets.append({"myelin_intensity": myelin_data})
-
-    # Load all contour filenames corresponding to myelin images
-    myelin_c_filenames = [f for f in os.listdir(folder_path) if f'ani{exp_num}' in f and
-                          f.endswith(boundary_filename + ".txt")]
-
-    # Import contours corresponding to myelin images
-    myelin_contours = []
-    for index, filename in enumerate(myelin_c_filenames):
-        file_path = os.path.join(folder_path, filename)
-        myelin_contour = get_roi_from_txt(file_path, delimiter=',')
-        myelin_contours.append(myelin_contour)
-
-    # Load the AFM bright-field image used to define the measurement grid
-    afm_i_filename = os.path.join(folder_path, f'overview_#{exp_num}_image_roi_linearised.parquet')
-    afm_image = read_parquet_file(afm_i_filename, True)
-
-    # Load the AFM results file and extract grid coordinates with data values
-    data_path = os.path.join(folder_path, 'data_FAKE_FOR_CODE.csv')  # ToDo: Return to proper naming for correlation
-    if os.path.exists(data_path):  # ToDo: Replace with an assert statement once the correlation part is implemented
-        data = pd.read_csv(data_path)
-
-        # Extract measurement values
-        afm_dataset = {'modulus': data['modulus']}  # Save as dictionary to include additional measurements (e.g. fluidity)
-        afm_dataset = {key: np.array(value) for key, value in afm_dataset.items()}
-
-        # Extract AFM grid
-        afm_grid = np.stack((np.array(data['x_image']), np.array(data['y_image'])), axis=-1)
-    else:
-        afm_dataset, afm_grid = None, None
-        print('No AFM data file found, continuing without!')
-
-    # Load the contour associated to the AFM measurement
-    afm_c_filename = os.path.join(folder_path, f'overview_#{exp_num}_{boundary_filename}.txt')
-    afm_contour = get_roi_from_txt(os.path.join(folder_path, afm_c_filename), delimiter=',')
-
-    # To make the boundary matching algorithm more robust, additional information like a landmark point similar on all
-    # contours and an axis used to align contours can be included
-
-    # Load all myelin and AFM associated key-points in a list
-    # ToDo: Make choice of points more robust for multiple key-points
-    myelin_keypoints, afm_keypoint = [], []
-    if key_point_filename != "None":
-        myelin_p_filenames = [p for p in os.listdir(folder_path) if f'ani{exp_num}' in p and
-                              p.endswith(key_point_filename + ".txt")]
-        for index, filename in enumerate(myelin_p_filenames):
-            file_path = os.path.join(folder_path, filename)
-            myelin_keypoint_list = get_roi_from_txt(file_path, delimiter=',')
-            myelin_keypoint = min(myelin_keypoint_list, key=lambda p: p[1])
-            myelin_keypoints.append(myelin_keypoint)
-
-        afm_p_filename = os.path.join(folder_path, f'overview_#{exp_num}_{key_point_filename}.txt')
-        afm_keypoint_list = get_roi_from_txt(os.path.join(folder_path, afm_p_filename), delimiter=',')
-        afm_keypoint = min(afm_keypoint_list, key=lambda p: p[1])
-
-    # Load all myelin rotation axes in a list
-    myelin_axes, afm_axis = [], []
-    if rot_axis_filename != "None":
-        myelin_r_filenames = [p for p in os.listdir(folder_path) if f'ani{exp_num}' in p and
-                              p.endswith(rot_axis_filename + ".txt")]
-        for index, filename in enumerate(myelin_r_filenames):
-            file_path = os.path.join(folder_path, filename)
-            myelin_axis = get_roi_from_txt(file_path, delimiter=',')
-            myelin_axes.append(myelin_axis)
-
-        afm_r_filename = os.path.join(folder_path, f'overview_#{exp_num}_{rot_axis_filename}.txt')
-        afm_axis = get_roi_from_txt(os.path.join(folder_path, afm_r_filename), delimiter=',')
-
-    # Add AFM data as the first list item
-    grids = [afm_grid] + myelin_grids
-    datasets = [afm_dataset] + myelin_datasets
-    contours = [afm_contour] + myelin_contours
-    keypoints = [afm_keypoint] + myelin_keypoints
-    axes = [afm_axis] + myelin_axes
-
-    scale_matrices = "None"
-
-    results = {"grids": grids,
-               "scales": scale_matrices,
-               "datasets": datasets,
-               "contours": contours,
-               "points": keypoints,
-               "axes": axes,
-               "filenames": myelin_filenames,
-               "bg_images": afm_image}
-
-    return results
-
-
-def load_salini_afm(base_path, boundary_filename, key_point_filename=None, rot_axis_filename=None,
-                    sampling_size=None, **kwargs):
-    """
-    Function to load AFM experiments analysed with the Matlab library 'batchforce'.
-    """
-    foldernames, grids, scale_matrices, datasets, contours, points, axes, bg_images_list = [], [], [], [], [], [], [], []
-
-    # Iterate over experiments
-    experiment_folders = [f for f in os.listdir(base_path) if f'#' in f]
-    for folder_name in experiment_folders:
-
-        # Get the experiment number from the folder name
-        match = re.search(r'#(\d+)', folder_name)
-        exp_num = int(match.group(1)) if match else None
-
-        # Load parquet data file
-        parquet_name = re.sub(r"_(left|right)$", r"_afm_measurements_fortranslation_\1", folder_name)
-        parquet_path = os.path.join(base_path, folder_name, f"{parquet_name}.parquet")
-        if os.path.exists(parquet_path):
-            grid, data = read_parquet_file(parquet_path, False, x_var='x_image', y_var='y_image', data_var="modulus")
-            dataset = {"modulus": data}
-        else:
-            grid, dataset = None, None
-
-        # Load contour file
-        contour_name = re.sub(r"_(left|right)$", fr"_{boundary_filename}_\1", folder_name)
-        contour_path = os.path.join(base_path, folder_name, f"{contour_name}.txt")
-        contour = get_roi_from_txt(contour_path, delimiter=',')
-
-        # Save imported data
-        foldernames.append(folder_name)
-        grids.append(grid)
-        datasets.append(dataset)
-        contours.append(contour)
-
-        # To make the boundary matching algorithm more robust, additional information like a landmark point similar on all
-        # contours and an axis used to align contours can be included
-        # Load keypoint
-        if key_point_filename != "None":
-            keypoint_name = re.sub(r"_(left|right)$", fr"_{key_point_filename}_\1", folder_name)
-            keypoint_path = os.path.join(base_path, folder_name, f"{keypoint_name}.txt")
-            keypoint = get_roi_from_txt(keypoint_path, delimiter=',')
-            keypoint = min(keypoint, key=lambda p: p[1])
-            points.append(keypoint)
-        else:
-            points.append(None)
-
-        # Load axis
-        if rot_axis_filename != "None":
-            axis_name = re.sub(r"_(left|right)$", fr"_{rot_axis_filename}_\1", folder_name)
-            axis_path = os.path.join(base_path, folder_name, f"{axis_name}.txt")
-            axis = get_roi_from_txt(axis_path, delimiter=',')
-            axes.append(axis)
-        else:
-            axes.append(None)
-
-    # Load target
-    folder_name = "Saliani_2019_mC6_left"
-    contour_name = re.sub(r"_(left|right)$", fr"_{boundary_filename}_\1", folder_name)
-    contour_path = os.path.join(base_path, folder_name, f"{contour_name}.txt")
-    target_contour = get_roi_from_txt(contour_path, delimiter=',')
-
-    keypoint_name = re.sub(r"_(left|right)$", fr"_{key_point_filename}_\1", folder_name)
-    keypoint_path = os.path.join(base_path, folder_name, f"{keypoint_name}.txt")
-    target_keypoint = get_roi_from_txt(keypoint_path, delimiter=',')
-
-    axis_name = re.sub(r"_(left|right)$", fr"_{rot_axis_filename}_\1", folder_name)
-    axis_path = os.path.join(base_path, folder_name, f"{axis_name}.txt")
-    target_axis = get_roi_from_txt(axis_path, delimiter=',')
-
-    # Use Salini atlas data as the first list item
-    grids = [None] + grids
-    datasets = [None] + datasets
-    contours = [target_contour] + contours
-    points = [target_keypoint] + points
-    axes = [target_axis] + axes
-    scale_matrices = None
-    bg_images_list = None
-    reg_grid_dims = None
-
-    results = {"grids": grids,
-               "reg_grid_dims": reg_grid_dims,
-               "scales": scale_matrices,
-               "datasets": datasets,
-               "contours": contours,
-               "points": points,
-               "axes": axes,
-               "filenames": foldernames,
-               "bg_images": bg_images_list}
-
-    return results
+    return Sample(contour=contour, grid=afm_grid, dataset=afm_data, scale=afm_scale_matrix, landmarks=landmarks,
+                 filename=folder_name, bg_image=bg_image)

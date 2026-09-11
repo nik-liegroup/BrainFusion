@@ -1,6 +1,6 @@
 import pytest
 import numpy as np
-from brainfusion._match_contours import (interpolate_contour, angle_between_lines, match_contour_with_ellipse,
+from brainfusion.match_contours import (interpolate_contour, angle_between_lines, match_contour_with_ellipse,
                                          match_contour_with_bbox, extract_bbox_corners, circularly_shift_contours,
                                          get_contour_orientation, boundary_match_contours, dtw_with_curvature_penalty)
 

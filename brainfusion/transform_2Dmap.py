@@ -142,13 +142,13 @@ def create_rbf_interpolators(original_contour: np.ndarray, deformed_contour: np.
     else:
         epsilon = None
 
-        # Single 2D-valued interpolator
-        rbf = RBFInterpolator(
-            P, Q,
-            kernel=function,
-            smoothing=smoothing,
-            epsilon=epsilon,
-        )
+    # Single 2D-valued interpolator
+    rbf = RBFInterpolator(
+        P, Q,
+        kernel=function,
+        smoothing=smoothing,
+        epsilon=epsilon,
+    )
 
     # Vectorised wrappers
     def _eval_xy(xq, yq):

@@ -2,8 +2,8 @@ import numpy as np
 from scipy.spatial import cKDTree
 from scipy.stats import pearsonr, fisher_exact
 import pandas as pd
-from brainfusion._plot_maps import plot_correlation_with_radii
-from brainfusion._utils import mask_contour
+from brainfusion.plot_maps import plot_correlation_with_radii
+from brainfusion.utils import mask_contour
 
 
 def correlate_dense_around_sparse(sparse_data, sparse_grid, sparse_perc, dense_data, dense_grid, dense_perc,
@@ -162,7 +162,8 @@ def conditional_probability_table(a_present, b_present, a_name="A", b_name="B"):
     return cond_prop_table, stats_results
 
 
-def correlate_afm_myelin(afm_analysis, radius='max', afm_metric='modulus', average_func=np.nanmean, verify_corr=False):
+def correlate_afm_myelin(afm_analysis, radius='max', afm_metric='modulus', myelin_metric='myelin_intensity',
+                         average_func=np.nanmean, verify_corr=False):
     """
     Computes the correlation between AFM data and averaged myelin data within a given radius.
     Only considers data points inside the AFM contour.
@@ -186,21 +187,20 @@ def correlate_afm_myelin(afm_analysis, radius='max', afm_metric='modulus', avera
     # Calculate correlations between AFM data and each myelin dataset
     for idx, myelin_name in enumerate(myelin_filenames):
         myelin_grid = myelin_grids[idx]
-        myelin_dataset = myelin_datasets[idx]
+        myelin_data = myelin_datasets[idx][myelin_metric]
 
         if verify_corr:
             myelin_grid = afm_analysis['verification_trafo_grids'][idx-1] if idx > 0 else afm_analysis['verification_grids'][0]
-            myelin_dataset = np.random.choice(np.linspace(1, 10, 10), size=myelin_grid.shape[0])
+            myelin_data = np.random.choice(np.linspace(1, 10, 10), size=myelin_grid.shape[0])
 
         # Mask myelin points inside contour
         myelin_mask = mask_contour(afm_contour, myelin_grid)
         myelin_grid_filtered = myelin_grid[myelin_mask]
-        myelin_data_filtered = myelin_dataset[myelin_mask]
+        myelin_data_filtered = myelin_data[myelin_mask]
 
-        # Compute averaged myelin values
-        avg_myelin_values, radii = average_within_radius(myelin_grid_filtered, myelin_data_filtered, afm_grid_filtered,
-                                                         radius,
-                                                         average_func)
+        # Compute the myelin value averaged around each AFM point
+        avg_myelin_values, radii = average_within_radius(afm_grid_filtered, myelin_grid_filtered,
+                                                         myelin_data_filtered, radius, average_func)
 
         # Remove NaNs before correlation
         valid_mask = ~np.isnan(avg_myelin_values)

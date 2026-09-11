@@ -1,31 +1,45 @@
 import os
-import tifffile as tiff
 from tifffile import TiffFile
 import numpy as np
 from skimage.transform import AffineTransform
 
-from brainfusion._io import get_roi_from_txt
-from brainfusion._utils import bin_2D_image, bin_outline
+from brainfusion.io import get_roi_from_txt
+from brainfusion.load_experiments.base import list_matching_files
+from brainfusion.metadata import attach_metadata, parse_name
+from brainfusion.sample import Sample
+from brainfusion.utils import bin_2D_image, bin_outline
 
 
-def load_microscopy_experiment(folder_path, key_point_filename="None", rot_axis_filename="None",
-                               boundary_filename='BrainBoundary', bin_size="None", bit_depth=16,
-                               normalize_percentile="None", clip=False, invert=True, **kwargs):
+def load_microscopy_experiment(folder_path, boundary_filename='BrainBoundary', landmarks_filename=None,
+                               bin_size="None", bit_depth=16, normalize_percentile="None", clip=False, invert=True,
+                               name_pattern=None, name_converters=None, **kwargs) -> list[Sample]:
     """
-    Load .tif files including all channels and tissue outlines.
+    Load .tif files including all channels and their tissue outlines.
+
+    If `landmarks_filename` is given, looks for '<image_stem><landmarks_filename>.txt' next to each image
+    (same convention as `boundary_filename`) and stores its points as that sample's `Sample.landmarks`. If
+    `name_pattern` is given, it is matched against each image's own filename (without extension) and the
+    extracted fields are stored in that sample's `.metadata` (see `brainfusion.metadata.parse_name`).
     """
     # Load all image files with corresponding brain outlines
-    tif_i_filenames = [f for f in os.listdir(folder_path) if f.lower().endswith('.tif')]
+    tif_i_filenames = list_matching_files(folder_path, lambda f: f.lower().endswith('.tif'))
 
     # Import tif images
-    tif_grids, tif_grids_dims, scale_matrices, tif_datasets, tif_contours, filenames = [], [], [], [], [], []
+    tif_grids, tif_grids_dims, scale_matrices, tif_datasets, tif_contours, tif_landmarks, filenames = \
+        [], [], [], [], [], [], []
     for filename in tif_i_filenames:
         file_path = os.path.join(folder_path, filename)
+        stem = filename.removesuffix(".tif")
 
         # Import contours corresponding to tif images
-        contour_filename = filename.removesuffix(".tif") + boundary_filename + '.txt'
-        contour_path = os.path.join(folder_path, contour_filename)
+        contour_path = os.path.join(folder_path, stem + boundary_filename + '.txt')
         tif_contour = get_roi_from_txt(contour_path, delimiter='\t', skip=1)
+
+        # Import optional landmark points, matched by position against the template's own landmarks
+        landmarks = None
+        if landmarks_filename is not None:
+            landmarks_path = os.path.join(folder_path, stem + landmarks_filename + '.txt')
+            landmarks = get_roi_from_txt(landmarks_path, delimiter='\t')
 
         # Load resolution metadata
         with TiffFile(file_path) as tif:
@@ -42,12 +56,17 @@ def load_microscopy_experiment(folder_path, key_point_filename="None", rot_axis_
             height = image.shape[0]
             if invert:
                 tif_contour[:, 1] = height - 1 - tif_contour[:, 1]  # Invert contour y-axis
+                if landmarks is not None:
+                    landmarks[:, 1] = height - 1 - landmarks[:, 1]
 
             tmp_img = image[::-1, :] # Flip y-axis
             if isinstance(bin_size, int):
                 tmp_img = bin_2D_image(tmp_img, bin_size=bin_size, crop=True)
                 tif_contour = bin_outline(tif_contour, bin_size=bin_size, crop=True,
                                           original_shape=image.shape[-2:])
+                if landmarks is not None:
+                    landmarks = bin_outline(landmarks, bin_size=bin_size, crop=True,
+                                            original_shape=image.shape[-2:])
                 binned = True
             channels['Channel_1'] = tmp_img.ravel()
             height, width = tmp_img.shape[-2:]
@@ -56,6 +75,8 @@ def load_microscopy_experiment(folder_path, key_point_filename="None", rot_axis_
             height = image[0].shape[0]
             if invert:
                 tif_contour[:, 1] = height - 1 - tif_contour[:, 1]  # Invert contour y-axis
+                if landmarks is not None:
+                    landmarks[:, 1] = height - 1 - landmarks[:, 1]
             for i in range(image.shape[0]):
                 tmp_img = image[i][::-1, :] # Flip y-axis
                 if isinstance(bin_size, int):
@@ -66,6 +87,9 @@ def load_microscopy_experiment(folder_path, key_point_filename="None", rot_axis_
             if isinstance(bin_size, int):
                 tif_contour = bin_outline(tif_contour, bin_size=bin_size, crop=True,
                                           original_shape=image.shape[-2:])
+                if landmarks is not None:
+                    landmarks = bin_outline(landmarks, bin_size=bin_size, crop=True,
+                                            original_shape=image.shape[-2:])
             height, width = tmp_img.shape[-2:]
         else:
             raise ValueError(f"Invalid image dimension: {image.ndim}")
@@ -123,49 +147,24 @@ def load_microscopy_experiment(folder_path, key_point_filename="None", rot_axis_
         aff = AffineTransform(matrix=scale_matrix)
         pixel_grid = aff(pixel_grid)
         tif_contour = aff(tif_contour)
+        if landmarks is not None:
+            landmarks = aff(landmarks)
 
         # Store data as dictionary and contour
         tif_contours.append(tif_contour)
         tif_grids.append(pixel_grid)
+        tif_landmarks.append(landmarks)
         scale_matrices.append(np.linalg.inv(scale_matrix))
         tif_grids_dims.append(np.array([height, width]))
         tif_datasets.append(channels)
         filenames.append(os.path.splitext(filename)[0])
 
-    # To make the boundary matching algorithm more robust, additional information like a landmark point similar on all
-    # contours and an axis used to align contours can be included
-
-    # Load all key-points in a list
-    tif_keypoints = []
-    keypoint_idx = 0  # If more than one keypoint is defined, use the first  # ToDo: Allow for multiple key-points
-    if key_point_filename != "None":
-        tif_p_filenames = [p for p in os.listdir(folder_path) if p.endswith(key_point_filename + ".txt")]
-        for index, filename in enumerate(tif_p_filenames):
-            file_path = os.path.join(folder_path, filename)
-            tif_keypoint = get_roi_from_txt(file_path, delimiter='\t')[keypoint_idx]
-            tif_keypoints.append(tif_keypoint)
-    else:
-        tif_keypoints = [None] * len(tif_contours)
-
-    # Load all rotation axes in a list
-    tif_axes = []
-    if rot_axis_filename != "None":
-        tif_r_filenames = [p for p in os.listdir(folder_path) if p.endswith(rot_axis_filename + ".txt")]
-        for index, filename in enumerate(tif_r_filenames):
-            file_path = os.path.join(folder_path, filename)
-            tif_axis = get_roi_from_txt(file_path, delimiter='\t')
-            tif_axes.append(tif_axis)
-    else:
-        tif_axes = [None] * len(tif_contours)
-
-    results = {"grids": tif_grids,
-               "reg_grid_dims": tif_grids_dims,
-               "scales": scale_matrices,
-               "datasets": tif_datasets,
-               "contours": tif_contours,
-               "points": tif_keypoints,
-               "axes": tif_axes,
-               "filenames": filenames,
-               "bg_images": "None"}
-
-    return results
+    samples = [
+        Sample(contour=contour, grid=grid, dataset=dataset, scale=scale, landmarks=landmarks,
+              grid_shape=grid_shape, filename=filename)
+        for contour, grid, dataset, scale, landmarks, grid_shape, filename in
+        zip(tif_contours, tif_grids, tif_datasets, scale_matrices, tif_landmarks, tif_grids_dims, filenames)
+    ]
+    if name_pattern is not None:
+        samples = [attach_metadata(s, parse_name(s.filename, name_pattern, name_converters)) for s in samples]
+    return samples

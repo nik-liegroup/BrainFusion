@@ -45,11 +45,8 @@ def export_analysis(path, analysis, params):
     with h5py.File(path, 'w') as h5file:
         write_dict_in_h5(h5file, '/', analysis)
 
-        # Save parameters as attributes
+        # Save parameters as attributes so they can be checked against on the next run
         for key, value in params.items():
-            if key == 'overwrite_analysis':
-                continue
-
             h5file.attrs[key] = value
 
     print(f"Results and parameters saved in {path}.")
@@ -63,11 +60,16 @@ def write_dict_in_h5(h5file, group_path, dic):
             write_dict_in_h5(h5file, f"{group_path}/{key}", item)
 
         elif isinstance(item, list):
-            if all(isinstance(i, np.ndarray) for i in item):
-                # Store list of arrays as a group of datasets
+            if all(isinstance(i, np.ndarray) or i is None for i in item):
+                # Store list of arrays (some entries may be None) as a group of datasets
                 list_group = h5file.create_group(f"{group_path}/{key}")
                 for i, arr in enumerate(item):
-                    list_group.create_dataset(str(i), data=arr)
+                    if arr is None:
+                        dt = h5py.string_dtype(encoding="utf-8")
+                        ds = list_group.create_dataset(str(i), data=np.array("", dtype=dt))
+                        ds.attrs["py_none"] = True
+                    else:
+                        list_group.create_dataset(str(i), data=arr)
 
             elif all(isinstance(i, dict) for i in item):
                 # Store list of dictionaries as a group with subgroups
@@ -84,10 +86,8 @@ def write_dict_in_h5(h5file, group_path, dic):
                 ds.attrs["none_mask"] = np.array(none_mask, dtype=bool)
 
             elif all(isinstance(i, (int, float, bool, np.integer, np.floating, np.bool_)) or i is None for i in item):
-                # Store list of numbers/bools/None; represent None as NaN and mask separately
-                has_float = any(isinstance(i, float) for i in item if i is not None)
-                dtype = np.float64 if has_float else np.float64  # use float so we can NaN
-                arr = np.array([np.nan if v is None else v for v in item], dtype=dtype)
+                # Store list of numbers/bools/None as floats so None can be represented as NaN
+                arr = np.array([np.nan if v is None else v for v in item], dtype=np.float64)
                 ds = h5file.create_dataset(f"{group_path}/{key}", data=arr)
                 none_mask = [v is None for v in item]
                 ds.attrs["none_mask"] = np.array(none_mask, dtype=bool)
@@ -136,8 +136,8 @@ def import_analysis(path):
         params = {}
         for key, value in h5file.attrs.items():
             if isinstance(value, np.generic):
-                value = value.item()   # Extract the scalar while keeping its NumPy type
-            elif key == 'afm_variables' and isinstance(value, np.ndarray):
+                value = value.item()  # Extract the scalar while keeping its Python type
+            elif isinstance(value, np.ndarray):
                 value = value.tolist()
             params[key] = value
 
@@ -188,10 +188,6 @@ def read_dict_from_h5(h5file, group_path='/'):
                     data = [s.decode("utf-8") for s in data.tolist()]
                 elif data.dtype.kind == 'O':  # object, may contain bytes
                     data = [s.decode("utf-8") if isinstance(s, (bytes, np.bytes_)) else s for s in data.tolist()]
-
-            # Special-case kept (optional; generic decoding above also handles it)
-            if key == 'measurement_filenames' and isinstance(data, np.ndarray):
-                data = [s.decode('utf-8') if isinstance(s, (bytes, np.bytes_)) else s for s in data.tolist()]
 
             result[key] = data
 

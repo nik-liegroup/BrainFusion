@@ -5,13 +5,21 @@ import re
 import pandas as pd
 import h5py
 import threading
-from brainfusion._io import get_roi_from_txt
-from brainfusion._utils import project_brillouin_dataset
+from brainfusion.io import get_roi_from_txt
+from brainfusion.metadata import attach_metadata, parse_name
+from brainfusion.utils import project_brillouin_dataset
+from brainfusion.sample import Sample
 
 
-def load_brillouin_experiment(folder_path):
+def load_brillouin_experiment(folder_path, landmarks_filename=None, name_pattern=None, name_converters=None,
+                              **kwargs) -> Sample:
     """
-    Function to load a Brillouin experiment analysed with the BMicro Python package.
+    Load a Brillouin experiment analysed with the BMicro Python package.
+
+    If `landmarks_filename` is given, looks for '<landmarks_filename>.txt' next to the boundary outline (in
+    'Plots') and stores its points as `Sample.landmarks`. If `name_pattern` is given, it is matched against
+    the folder's name and the extracted fields are stored in the sample's `.metadata` (see
+    `brainfusion.metadata.parse_name`).
     """
     # Load Brillouin metadata file
     bm_h5_path = os.path.join(folder_path, 'RawData', 'Brillouin.h5')
@@ -41,6 +49,11 @@ def load_brillouin_experiment(folder_path):
     # Load brain tissue boundary contour
     contour = get_roi_from_txt(os.path.join(folder_path, 'Plots', 'brain_outline.txt'))
 
+    # Load optional landmark points, matched by position against the template's own landmarks
+    landmarks = None
+    if landmarks_filename is not None:
+        landmarks = get_roi_from_txt(os.path.join(folder_path, 'Plots', f'{landmarks_filename}.txt'))
+
     # Rotate bright-field image
     bf_data_rep = np.fliplr(np.rot90(bf_data_rep, 1))
 
@@ -59,13 +72,21 @@ def load_brillouin_experiment(folder_path):
                       rtol=1.e-3)
     scale = np.abs(bm_metadata_rep['pixPerMicrometerX'][0, 1])
 
-    # Create 2D Brillouin map from 3D dataset and ravel datasets
-    bm_data_rep, bm_metadata_rep = project_brillouin_dataset(bm_data_rep, bm_metadata_rep)
+    # Collapse the 3D Brillouin dataset into a 2D map and get its (x, y) grid
+    bm_data_rep, bm_grid_rep = project_brillouin_dataset(bm_data_rep, bm_metadata_rep)
 
-    # Scale Brillouin contour to µm
+    # Scale Brillouin grid, contour and landmarks to µm
+    bm_grid_rep = bm_grid_rep / scale
     contour = contour / scale
+    if landmarks is not None:
+        landmarks = landmarks / scale
 
-    return bm_data_rep, bm_metadata_rep, bf_data_rep, contour, scale
+    folder_name = os.path.basename(os.path.normpath(folder_path))
+    sample = Sample(contour=contour, grid=bm_grid_rep, dataset=bm_data_rep, scale=scale, landmarks=landmarks,
+                    bg_image=bf_data_rep, filename=folder_name)
+    if name_pattern is not None:
+        sample = attach_metadata(sample, parse_name(folder_name, name_pattern, name_converters))
+    return sample
 
 
 def get_brillouin_metadata(h5_path, data_var):

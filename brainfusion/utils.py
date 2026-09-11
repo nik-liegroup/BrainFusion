@@ -128,6 +128,50 @@ def bin_2D_image(img: np.ndarray, bin_size: int, method: str = 'mean', crop: boo
         raise ValueError("Invalid method: choose 'mean', 'sum', or 'max'")
 
 
+def project_brillouin_dataset(bm_data: dict, bm_metadata: dict, br_intensity_threshold: float = 15) -> tuple[dict, np.ndarray]:
+    """
+    Collapse a 3D (x, y, z) Brillouin dataset into a 2D map by taking the median over z at each (x, y) location.
+
+    Points with a weak peak, an implausible shift, or an implausible linewidth are excluded from the median so
+    that noisy fits do not bias the projection.
+
+    Parameters
+    ----------
+    bm_data : dict
+        Maps variable name (e.g. 'brillouin_shift_f', 'brillouin_peak_fwhm_f') to an (x, y, z) array.
+    bm_metadata : dict
+        Must contain 'brillouin_grid', an (x, y, z, 3) array of measurement coordinates.
+    br_intensity_threshold : float, optional
+        Minimum peak intensity for a point to be included in the projection.
+
+    Returns
+    -------
+    bm_data_proj : dict
+        Maps '<variable>_proj' to the projected (x, y) map for each input variable.
+    bm_grid_proj : np.ndarray of shape (x * y, 2)
+        Flattened (x, y) grid coordinates of the projection, taken from the first z-slice.
+    """
+    if 'brillouin_peak_intensity' in bm_data and 'brillouin_shift_f' in bm_data:
+        mask = (bm_data['brillouin_peak_intensity'] > br_intensity_threshold) & \
+               (4.4 < bm_data['brillouin_shift_f']) & (bm_data['brillouin_shift_f'] < 10.0)
+        if 'brillouin_peak_fwhm_f' in bm_data:
+            mask &= (0 < bm_data['brillouin_peak_fwhm_f']) & (bm_data['brillouin_peak_fwhm_f'] < 5)
+    else:
+        mask = True
+
+    bm_data_proj = {}
+    for key, value in bm_data.items():
+        if key == 'brillouin_peak_intensity':
+            continue
+        masked_value = np.where(mask, value, np.nan)
+        bm_data_proj[f'{key}_proj'] = np.nanmedian(masked_value, axis=-1).ravel()
+
+    grid_first_slice = bm_metadata['brillouin_grid'][:, :, 0, :2]  # Use x, y grid of the first z-slice
+    bm_grid_proj = np.column_stack([grid_first_slice[:, :, 0].ravel(), grid_first_slice[:, :, 1].ravel()])
+
+    return bm_data_proj, bm_grid_proj
+
+
 def bin_outline(outline: np.ndarray, bin_size: int, crop: bool = False, original_shape: tuple[int, int] = None) -> np.ndarray:
     """
     Transform outline coordinates to match the binned image coordinate system.

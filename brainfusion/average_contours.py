@@ -2,7 +2,7 @@ import numpy as np
 from typing import List, Tuple
 from scipy.spatial.distance import directed_hausdorff
 from shapely.geometry import Polygon, Point, LineString
-from brainfusion._match_contours import get_contour_orientation
+from brainfusion.match_contours import get_contour_orientation
 
 
 def find_average_contour(contours_list: List[np.ndarray], average: str = 'star_domain', star_bins: int = 360,
@@ -186,8 +186,7 @@ def is_star_domain(contour: np.ndarray, centre: tuple[float, float], tol_factor:
         else:
             raise RuntimeError("Unexpected intersection type")
 
-        # Check if at least one intersection is close enough to target point
-        tst = [target_point.distance(inter) for inter in intersections]
+        # Reject if any intersection point lies further than atol from the boundary point being tested
         if any(target_point.distance(inter) > atol for inter in intersections):
             return False
 

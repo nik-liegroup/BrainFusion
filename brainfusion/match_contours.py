@@ -2,11 +2,11 @@ import numpy as np
 import cv2
 from scipy.interpolate import interp1d
 import scipy.ndimage as ndi
-from skimage.transform import AffineTransform
+from skimage.transform import AffineTransform, estimate_transform
 from typing import List, Tuple
 from collections import defaultdict
 from numpy.linalg import svd
-from brainfusion._dtw import dtw_with_curvature_penalty, segmented_contour_dtw
+from brainfusion.dtw import dtw_with_curvature_penalty, segmented_contour_dtw
 
 
 def interpolate_contour(contour: np.ndarray, num_points: int) -> np.ndarray:
@@ -34,30 +34,39 @@ def interpolate_contour(contour: np.ndarray, num_points: int) -> np.ndarray:
     return np.vstack((interp_x(new_dists), interp_y(new_dists))).T
 
 
-def align_contours(contour_list, grid_list, rot_axes=None, init_points=None, template_index=0, fit_routine='ellipse'):
+def align_contours(contour_list, grid_list, landmarks_list=None, template_index=0, fit_routine='ellipse'):
     """
-    Align a set of contours to a template contour specified by template index in the contours list. If template_index is
-    None, calculate average contour and align to it.
+    Align a set of contours to the template contour at `template_index`.
+
+    For a sample whose landmark points and the template's landmark points are both given, the affine
+    transform is fit directly from that point correspondence (see `match_contour_with_landmarks`) - this
+    takes priority over `fit_routine`. Samples without landmarks (or where the template has none) fall back
+    to matching the contour shape via `fit_routine` ('ellipse' or 'bbox').
     """
     assert 0 <= template_index < len(contour_list), print("Contour template index out of range!")
+    if landmarks_list is None:
+        landmarks_list = [None] * len(contour_list)
+    template_landmarks = landmarks_list[template_index]
 
-    # Match contours using ellipse fit
     matched_contours, matched_grids, matched_points, affine_matrices = [], [], [], []
     for i, contour in enumerate(contour_list):
-        ang = angle_between_lines(rot_axes[i], rot_axes[template_index]) if rot_axes[i] is not None else None
+        sample_landmarks = landmarks_list[i]
 
-        # Find rigid affine transformations
-        if fit_routine == 'ellipse':
-            contour_trafo, _ = match_contour_with_ellipse(contour, contour_list[template_index], rot_ang=ang)
+        # Find rigid affine transformation
+        if sample_landmarks is not None and template_landmarks is not None:
+            contour_trafo = match_contour_with_landmarks(sample_landmarks, template_landmarks)
+        elif fit_routine == 'ellipse':
+            contour_trafo, _ = match_contour_with_ellipse(contour, contour_list[template_index])
         elif fit_routine == 'bbox':
-            contour_trafo, _ = match_contour_with_bbox(contour, contour_list[template_index], rot_ang=ang)
+            contour_trafo, _ = match_contour_with_bbox(contour, contour_list[template_index])
         else:
             raise ValueError(f'The specified fit routine: {fit_routine}, is not implemented!')
 
         # Apply transformations to contours and grids
         matched_contour = contour_trafo(contour)
         matched_grid = contour_trafo(grid_list[i]) if grid_list[i] is not None else None
-        matched_point = contour_trafo(init_points[i]) if init_points[i] is not None else None
+        # Use the sample's own first landmark, transformed, as the circular-shift anchor point
+        matched_point = contour_trafo(sample_landmarks[:1])[0] if sample_landmarks is not None else None
 
         # Store transformed arrays
         matched_contours.append(matched_contour)
@@ -110,6 +119,40 @@ def angle_between_lines(source_axis: np.ndarray, target_axis: np.ndarray) -> flo
     signed_angle = np.sign(cross_z) * angle
 
     return signed_angle
+
+
+def match_contour_with_landmarks(a_points: np.ndarray, b_points: np.ndarray) -> AffineTransform:
+    """
+    Fit an affine transform that maps landmark points `a_points` onto the corresponding `b_points`.
+
+    Points are matched by position: `a_points[i]` corresponds to `b_points[i]`. If the two arrays have
+    different lengths, only the leading points shared by both are used.
+
+    Parameters
+    ----------
+    a_points : np.ndarray of shape (N, 2)
+        Landmark points on the source contour.
+    b_points : np.ndarray of shape (M, 2)
+        Corresponding landmark points on the target contour.
+
+    Returns
+    -------
+    transform : AffineTransform or SimilarityTransform
+        Transform mapping `a_points` onto `b_points`: a similarity transform (rotation, uniform scale,
+        translation) if exactly 2 points are shared, or a full affine fit (also independent x/y scale and
+        shear) for 3 or more.
+    """
+    if not (isinstance(a_points, np.ndarray) and a_points.ndim == 2 and a_points.shape[1] == 2):
+        raise ValueError("a_points must be a (N, 2) numpy array")
+    if not (isinstance(b_points, np.ndarray) and b_points.ndim == 2 and b_points.shape[1] == 2):
+        raise ValueError("b_points must be a (N, 2) numpy array")
+
+    n_points = min(len(a_points), len(b_points))
+    if n_points < 2:
+        raise ValueError(f"At least 2 corresponding landmark points are required, got {n_points}")
+
+    transform_type = 'affine' if n_points >= 3 else 'similarity'
+    return estimate_transform(transform_type, a_points[:n_points], b_points[:n_points])
 
 
 def match_contour_with_ellipse(a: np.ndarray, b: np.ndarray, rot_ang: float | None = None) ->(

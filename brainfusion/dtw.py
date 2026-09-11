@@ -187,9 +187,9 @@ def dtw_with_curvature_penalty(contour1: np.ndarray, contour2: np.ndarray,
         raise ValueError("contour1 must be a (N, 2) numpy array")
     if not isinstance(contour2, np.ndarray) or contour2.ndim != 2 or contour2.shape[1] != 2:
         raise ValueError("contour2 must be a (N, 2) numpy array")
-    if not isinstance(curvatures1, np.ndarray) or curvatures1.ndim != 1 or curvatures1.shape == len(contour1):
+    if not isinstance(curvatures1, np.ndarray) or curvatures1.ndim != 1 or curvatures1.shape[0] != len(contour1):
         raise ValueError(f"curvature1 must be a ({len(contour1)},) numpy array")
-    if not isinstance(curvatures2, np.ndarray) or curvatures2.ndim != 1 or curvatures2.shape == len(contour2):
+    if not isinstance(curvatures2, np.ndarray) or curvatures2.ndim != 1 or curvatures2.shape[0] != len(contour2):
         raise ValueError(f"curvature2 must be a ({len(contour2)},) numpy array")
 
     # Normalize curvature penalty factor dynamically

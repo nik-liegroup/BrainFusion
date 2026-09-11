@@ -1,6 +1,6 @@
 import pytest
 import numpy as np
-from brainfusion._utils import mask_contour, regular_grid_on_bbox, bin_2D_image, bin_outline
+from brainfusion.utils import mask_contour, regular_grid_on_bbox, bin_2D_image, bin_outline
 
 
 class TestMaskContour:
