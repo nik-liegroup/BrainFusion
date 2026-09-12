@@ -10,3 +10,4 @@ from .load_afm import load_batchforce_single, load_batchforce_all
 from .load_brillouin import load_brillouin_experiment, load_brillouin_all
 from .load_images import load_microscopy_single, load_microscopy_all
 from .load_parquet import load_parquet_samples
+from .load_fused import load_fused_analysis

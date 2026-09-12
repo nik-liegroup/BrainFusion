@@ -17,7 +17,7 @@ def load_batchforce_all(base_path, afm_variables, batchforce_filename, grid_conv
     Load every batchforce AFM experiment folder (name containing '#') found directly below `base_path`.
 
     See `load_batchforce_single` for what `landmarks_filename` does. If `name_pattern` is given, it is
-    matched against each folder's name (see `brainfusion.metadata.parse_name`) and the extracted fields are
+    matched against each folder's name (see `brainfusion.io.parse_name`) and the extracted fields are
     stored in the sample's `.metadata`, e.g. animal number, condition, stage.
     """
     samples = []
@@ -38,10 +38,18 @@ def load_batchforce_single(folder_path, afm_variables, batchforce_filename='data
     """
     Load a single AFM experiment analysed with the Matlab 'batchforce' library, together with its outline.
 
+    `afm_variables` is normally a list of column names to read directly out of `batchforce_filename` (one
+    column per quantity). Some batchforce versions instead export a long/tidy table with one row per
+    (point, quantity) - a 'result_parameter' column naming the quantity (e.g. 'Reduced apparent elastic
+    modulus') and a 'result' column holding its value - which is auto-detected and pivoted into one row per
+    point. For that format, pass `afm_variables` as a dict mapping the desired `Sample.dataset` key to the
+    quantity's `result_parameter` label instead, e.g. `{'modulus': 'Reduced apparent elastic modulus'}`.
+
     If `landmarks_filename` is given, looks for '<landmarks_filename>.txt' next to the outline and stores its
     points as `Sample.landmarks`.
     """
     folder_name = os.path.basename(os.path.normpath(folder_path))
+    variable_map = afm_variables if isinstance(afm_variables, dict) else {name: name for name in afm_variables}
 
     # Load the AFM analysis file
     data_path = os.path.join(folder_path, 'region analysis', batchforce_filename)
@@ -53,7 +61,14 @@ def load_batchforce_single(folder_path, afm_variables, batchforce_filename='data
                          f"writetable(data, 'data.csv') in Matlab")
     elif data_extension == '.csv':
         data = pd.read_csv(data_path)
-        afm_data = {variable: np.array(data[variable]) for variable in afm_variables}
+        if 'result_parameter' in data.columns and 'result' in data.columns:
+            wide = data.pivot_table(index=['x_image', 'y_image'], columns='result_parameter', values='result',
+                                    aggfunc='first').reset_index()
+            if 'x' in data.columns and 'y' in data.columns:
+                stage_xy = data.drop_duplicates(subset=['x_image', 'y_image'])[['x_image', 'y_image', 'x', 'y']]
+                wide = wide.merge(stage_xy, on=['x_image', 'y_image'], how='left')
+            data = wide
+        afm_data = {key: np.array(data[label]) for key, label in variable_map.items()}
     else:
         raise ValueError(f"{data_extension} files containing AFM analysis data are not supported!")
 

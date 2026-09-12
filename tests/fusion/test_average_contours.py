@@ -1,6 +1,5 @@
 import pytest
 import numpy as np
-import matplotlib.pyplot as plt
 from brainfusion.fusion.average_contours import (find_average_contour, calculate_average_contour, is_star_domain,
                                                  calculate_error_distances, jaccard_distance, frechet_distance,
                                                  hausdorff_distance)
@@ -113,7 +112,6 @@ class TestIsStarDomain:
         contour = np.array([
             [0, 0], [2, 0], [2, 1], [1, 1], [1, 2], [0, 2], [0, 0]
         ])
-        #plot_star_domain_check(contour, (1.5, 0.75))
         assert is_star_domain(contour, centre=(1.5, 0.75)) is False
 
     def test_concave_polygon_star_from_right_centre(self):
@@ -121,7 +119,6 @@ class TestIsStarDomain:
         contour = np.array([
             [0, 0], [2, 0], [2, 1], [1, 1], [1, 2], [0, 2], [0, 0]
         ])
-        #plot_star_domain_check(contour, (0.5, 0.5))
         assert is_star_domain(contour, centre=(0.5, 0.5)) is True
 
     def test_circle_approximation(self):
@@ -139,7 +136,6 @@ class TestIsStarDomain:
             [0, 0], [1, 0], [1, 1], [0.4, 1], [0.6, 0.95], [0.3, 1], [0, 1], [0, 0]
         ])
         centre = (0.5, 0.5)
-        # plot_star_domain_check(contour, centre)
         assert is_star_domain(contour, centre=centre, tol_factor=1e-6) is False
         assert is_star_domain(contour, centre=centre, tol_factor=1e-1) is True
 
@@ -286,29 +282,3 @@ class TestHausdorffDistance:
         good = np.array([[0, 0], [1, 1]])
         with pytest.raises(ValueError, match="must be a NumPy array of shape"):
             hausdorff_distance(good, bad)
-
-
-# Helper function for visual inspection of star domains when debugging manually
-def plot_star_domain_check(contour: np.ndarray, centre: tuple[float, float]):
-    """
-    Plot the polygon defined by `contour` and lines from `centre` to each contour vertex.
-    """
-    contour = np.asarray(contour)
-    centre = np.asarray(centre)
-
-    plt.figure(figsize=(6, 6))
-
-    # Plot contour
-    plt.plot(*contour.T, 'k-', label='Contour', linewidth=2)
-
-    # Plot centre point
-    plt.plot(centre[0], centre[1], 'ro', label='Centre')
-
-    # Draw lines to each point
-    for pt in contour:
-        plt.plot([centre[0], pt[0]], [centre[1], pt[1]], 'r--', alpha=0.4)
-
-    plt.axis('equal')
-    plt.legend()
-    plt.title('Star Domain Visibility Check')
-    plt.show()

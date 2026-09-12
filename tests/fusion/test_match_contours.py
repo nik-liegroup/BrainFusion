@@ -1,10 +1,9 @@
 import pytest
 import numpy as np
 from brainfusion.fusion.match_contours import (interpolate_contour, match_contour_with_ellipse,
-                                               match_contour_with_bbox, extract_bbox_corners,
-                                               circularly_shift_contours, get_contour_orientation,
-                                               boundary_match_contours)
-from brainfusion.fusion.dtw import dtw_with_curvature_penalty
+                                               match_contour_with_bbox, match_contour_with_landmarks,
+                                               extract_bbox_corners, circularly_shift_contours,
+                                               get_contour_orientation, boundary_match_contours, align_contours)
 
 
 class TestInterpolateContour:
@@ -330,47 +329,101 @@ class TestBoundaryMatchContours:
             boundary_match_contours([], template_index=0)
 
 
-class TestDTWWithCurvaturePenalty:
+class TestMatchContourWithLandmarks:
+
+    def test_similarity_fit_two_points(self):
+        # Two landmarks related by a pure translation - a 2-point fit must reproduce it exactly
+        a_points = np.array([[0, 0], [1, 0]])
+        b_points = a_points + [5, 3]
+        transform = match_contour_with_landmarks(a_points, b_points)
+        np.testing.assert_allclose(transform(a_points), b_points, atol=1e-8)
+
+    def test_affine_fit_three_points(self):
+        a_points = np.array([[0, 0], [1, 0], [0, 1]])
+        rot = np.array([[0, -1], [1, 0]])  # 90 degree rotation
+        b_points = a_points @ rot.T + [2, -1]
+        transform = match_contour_with_landmarks(a_points, b_points)
+        np.testing.assert_allclose(transform(a_points), b_points, atol=1e-8)
+
+    def test_extra_points_beyond_shared_length_are_ignored(self):
+        a_points = np.array([[0, 0], [1, 0], [0, 1], [5, 5]])
+        b_points = np.array([[0, 0], [1, 0], [0, 1]]) + [2, -1]
+        transform = match_contour_with_landmarks(a_points, b_points)
+        np.testing.assert_allclose(transform(a_points[:3]), b_points, atol=1e-8)
+
+    def test_too_few_points_raises(self):
+        with pytest.raises(ValueError, match="At least 2 corresponding landmark points"):
+            match_contour_with_landmarks(np.array([[0, 0]]), np.array([[1, 1]]))
+
+    def test_invalid_shape_raises(self):
+        with pytest.raises(ValueError, match="a_points must be a"):
+            match_contour_with_landmarks(np.array([0, 0, 1, 1]), np.array([[0, 0], [1, 1]]))
+
+
+class TestAlignContours:
 
     @staticmethod
-    def generate_circle(radius=1.0, n_points=100):
-        t = np.linspace(0, 2 * np.pi, n_points, endpoint=False)
-        return np.stack((radius * np.cos(t), radius * np.sin(t)), axis=1)
+    def circle(cx, cy, r, n=60):
+        theta = np.linspace(0, 2 * np.pi, n, endpoint=False)
+        return np.column_stack((cx + r * np.cos(theta), cy + r * np.sin(theta)))
 
-    @staticmethod
-    def generate_ellipse(a=1.0, b=0.5, n_points=100):
-        t = np.linspace(0, 2 * np.pi, n_points, endpoint=False)
-        return np.stack((a * np.cos(t), b * np.sin(t)), axis=1)
+    def test_ellipse_fit_centres_every_sample_on_origin(self):
+        contours = [self.circle(0, 0, 1), self.circle(5, -3, 2)]
+        aligned, _, _ = align_contours(contours, [None, None], template_index=0, fit_routine='ellipse')
+        for contour in aligned:
+            np.testing.assert_allclose(contour.mean(axis=0), [0, 0], atol=1e-6)
 
-    def test_identical_shapes(self):
-        contour = self.generate_circle(n_points=50)
-        warped1, warped2 = dtw_with_curvature_penalty(contour, contour, np.zeros(len(contour)), np.zeros(len(contour)))
-        np.testing.assert_allclose(warped1, warped2, atol=1e-6)
+    def test_landmark_fit_stays_consistent_with_origin_centred_template(self):
+        # Regression test: landmark-based alignment used to register samples onto the template's own
+        # (generally off-origin) position while the ellipse/bbox fallback always centred on the origin -
+        # mixing the two, or using landmarks with an off-origin template, left samples in different frames.
+        template_contour = self.circle(5000, 3000, 100)
+        template_landmarks = np.array([[5100, 3000], [5000, 3100], [4900, 3000]])
+        sample_contour = self.circle(5200, 2950, 105)
+        sample_landmarks = np.array([[5305, 2950], [5200, 3055], [5095, 2950]])
 
-    def test_ellipse_to_circle(self):
-        circle = self.generate_circle(n_points=60)
-        ellipse = self.generate_ellipse(n_points=60)
-        warped1, warped2 = dtw_with_curvature_penalty(ellipse, circle,  np.zeros(len(ellipse)),  np.zeros(len(circle)))
-        assert warped1.shape == warped2.shape
-        assert warped1.shape[1] == 2
+        aligned, _, _ = align_contours([template_contour, sample_contour], [None, None],
+                                       landmarks_list=[template_landmarks, sample_landmarks], template_index=0)
 
-    def test_invalid_input_shape(self):
-        bad_input = np.array([[0, 0], [1]], dtype=object)  # Ragged array
-        circle = self.generate_circle()
-        with pytest.raises(ValueError, match="must be a \(N, 2\) numpy array"):
-            dtw_with_curvature_penalty(bad_input, circle, np.zeros(len(circle)), np.zeros(len(circle)))
-        with pytest.raises(ValueError, match="must be a \(N, 2\) numpy array"):
-            dtw_with_curvature_penalty(circle, bad_input, np.zeros(len(circle)), np.zeros(len(circle)))
+        for contour in aligned:
+            np.testing.assert_allclose(contour.mean(axis=0), [0, 0], atol=1e-6)
 
-    def test_output_dimensions_match(self):
-        contour1 = self.generate_circle(n_points=120)
-        contour2 = self.generate_ellipse(n_points=80)
-        warped1, warped2 = dtw_with_curvature_penalty(contour1, contour2, np.zeros(len(contour1)), np.zeros(len(contour2)))
-        assert warped1.shape == warped2.shape
-        assert warped1.shape[1] == 2
+    def test_mixed_landmark_and_fallback_share_one_frame(self):
+        # One sample has landmarks, the other falls back to ellipse fitting - both must still end up
+        # registered in the same origin-centred frame as the template.
+        template_contour = self.circle(5000, 3000, 100)
+        template_landmarks = np.array([[5100, 3000], [5000, 3100], [4900, 3000]])
+        landmark_sample = self.circle(5200, 2950, 105)
+        landmark_sample_landmarks = np.array([[5305, 2950], [5200, 3055], [5095, 2950]])
+        fallback_sample = self.circle(4800, 3100, 95)
 
-    def test_extreme_curvature_weight(self):
-        c1 = self.generate_circle()
-        c2 = self.generate_ellipse()
-        warped1, warped2 = dtw_with_curvature_penalty(c1, c2, np.zeros(len(c1)), np.zeros(len(c2)), dtw_curvature=10.0)
-        assert warped1.shape == warped2.shape
+        aligned, _, _ = align_contours(
+            [template_contour, landmark_sample, fallback_sample], [None, None, None],
+            landmarks_list=[template_landmarks, landmark_sample_landmarks, None], template_index=0)
+
+        for contour in aligned:
+            np.testing.assert_allclose(contour.mean(axis=0), [0, 0], atol=1e-6)
+
+    def test_grids_are_shifted_consistently_with_contours(self):
+        contours = [self.circle(0, 0, 1), self.circle(5, -3, 2)]
+        grids = [np.array([[0.1, 0.1]]), np.array([[5.1, -2.9]])]
+        _, aligned_grids, _ = align_contours(contours, grids, template_index=0, fit_routine='ellipse')
+        assert aligned_grids[0] is not None
+        # Sample 2's own contour is twice the template's radius, so the same relative offset from its own
+        # centre ([0.1, 0.1] in both cases) must shrink by that same factor once mapped into template space.
+        np.testing.assert_allclose(aligned_grids[0][0] / 2, aligned_grids[1][0], atol=1e-6)
+
+    def test_none_grid_passes_through_as_none(self):
+        contours = [self.circle(0, 0, 1), self.circle(1, 1, 1)]
+        _, aligned_grids, _ = align_contours(contours, [None, None], template_index=0)
+        assert aligned_grids == [None, None]
+
+    def test_invalid_template_index_raises(self):
+        contours = [self.circle(0, 0, 1)]
+        with pytest.raises(AssertionError):
+            align_contours(contours, [None], template_index=5)
+
+    def test_unknown_fit_routine_raises(self):
+        contours = [self.circle(0, 0, 1), self.circle(1, 1, 1)]
+        with pytest.raises(ValueError, match="is not implemented"):
+            align_contours(contours, [None, None], template_index=0, fit_routine='magic')
