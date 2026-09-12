@@ -39,37 +39,53 @@ def align_contours(contour_list, grid_list, landmarks_list=None, template_index=
     transform is fit directly from that point correspondence (see `match_contour_with_landmarks`) - this
     takes priority over `fit_routine`. Samples without landmarks (or where the template has none) fall back
     to matching the contour shape via `fit_routine` ('ellipse' or 'bbox').
+
+    Regardless of which route a sample takes, its resulting position is always registered relative to the
+    template's own true position - `fit_routine`-based fits only determine shape (rotation/scale), so they
+    are additionally placed at the template's location instead of the origin, matching what the landmark fit
+    already does directly through point correspondence. This keeps every sample in one consistent frame even
+    when different samples take different routes. The whole aligned set is then shifted so the template ends
+    up centred on the origin - required since downstream code (e.g. `find_average_contour`'s star-domain
+    averaging) assumes an origin-centred frame - which reduces to a no-op whenever nothing used landmarks.
     """
     assert 0 <= template_index < len(contour_list), print("Contour template index out of range!")
     if landmarks_list is None:
         landmarks_list = [None] * len(contour_list)
     template_landmarks = landmarks_list[template_index]
 
-    matched_contours, matched_grids, matched_points, affine_matrices = [], [], [], []
+    contour_trafos, matched_contours, matched_points = [], [], []
     for i, contour in enumerate(contour_list):
         sample_landmarks = landmarks_list[i]
 
-        # Find rigid affine transformation
+        # Find rigid affine transformation, then place it at the template's own true position (a no-op for
+        # the landmark fit, which already targets that position directly through point correspondence)
         if sample_landmarks is not None and template_landmarks is not None:
             contour_trafo = match_contour_with_landmarks(sample_landmarks, template_landmarks)
         elif fit_routine == 'ellipse':
-            contour_trafo, _ = match_contour_with_ellipse(contour, contour_list[template_index])
+            shape_trafo, target_shift = match_contour_with_ellipse(contour, contour_list[template_index])
+            contour_trafo = shape_trafo + target_shift.inverse
         elif fit_routine == 'bbox':
-            contour_trafo, _ = match_contour_with_bbox(contour, contour_list[template_index])
+            shape_trafo, target_shift = match_contour_with_bbox(contour, contour_list[template_index])
+            contour_trafo = shape_trafo + target_shift.inverse
         else:
             raise ValueError(f'The specified fit routine: {fit_routine}, is not implemented!')
 
-        # Apply transformations to contours and grids
-        matched_contour = contour_trafo(contour)
-        matched_grid = contour_trafo(grid_list[i]) if grid_list[i] is not None else None
+        contour_trafos.append(contour_trafo)
+        matched_contours.append(contour_trafo(contour))
         # Use the sample's own first landmark, transformed, as the circular-shift anchor point
-        matched_point = contour_trafo(sample_landmarks[:1])[0] if sample_landmarks is not None else None
+        matched_points.append(contour_trafo(sample_landmarks[:1])[0] if sample_landmarks is not None else None)
 
-        # Store transformed arrays
-        matched_contours.append(matched_contour)
-        matched_grids.append(matched_grid)
-        matched_points.append(matched_point)
-        affine_matrices.append(np.linalg.inv(contour_trafo.params))  # Save inverted 3x3 affine matrix
+    # A no-op when the template is already at the origin (true whenever nothing used landmarks); otherwise
+    # shifts everyone by this same constant offset.
+    origin_shift = -np.mean(matched_contours[template_index], axis=0)
+    shift_trafo = AffineTransform(translation=origin_shift)
+
+    matched_contours = [contour + origin_shift for contour in matched_contours]
+    matched_grids = [contour_trafo(grid) + origin_shift if grid is not None else None
+                     for contour_trafo, grid in zip(contour_trafos, grid_list)]
+    matched_points = [point + origin_shift if point is not None else None for point in matched_points]
+    # Save inverted 3x3 affine matrices for the full transform (fit + origin shift) actually applied
+    affine_matrices = [np.linalg.inv((contour_trafo + shift_trafo).params) for contour_trafo in contour_trafos]
 
     # Circularly shift contours to match template
     template_contour = matched_contours[template_index]

@@ -5,5 +5,4 @@
 # via a Sample list. Self-contained - nothing outside this subpackage is needed to run it besides the shared
 # `Sample` type, `brainfusion.utils`, and `brainfusion.io` (for `run_fusion`'s cache step).
 
-from .core import brain_fusion, brain_fusion_correlation, run_fusion, fuse_boundaries, fuse_grids, \
-    fuse_measurement_datasets
+from .core import brain_fusion, run_fusion, fuse_boundaries, fuse_grids, fuse_measurement_datasets

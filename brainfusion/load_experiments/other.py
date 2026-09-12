@@ -31,7 +31,7 @@ def load_sc_afm_single(folder_path, boundary_filename, landmarks_filename=None, 
     e.g. one AFM sample as the alignment template for that same animal's myelin sections.
 
     If `name_pattern` is given, it is matched against the folder's name and the extracted fields are stored
-    in the sample's `.metadata` (see `brainfusion.metadata.parse_name`).
+    in the sample's `.metadata` (see `brainfusion.io.parse_name`).
     """
     folder_name = os.path.basename(os.path.normpath(folder_path))
     match = re.search(r'#(\d+)', folder_name)
@@ -75,7 +75,7 @@ def load_salini_afm(base_path, boundary_filename, landmarks_filename=None, name_
     If `landmarks_filename` is given, its points (matched by position, including for the atlas target) are
     stored as each sample's `Sample.landmarks` and used directly in the affine pre-alignment step. If
     `name_pattern` is given, it is matched against each folder's name and the extracted fields are stored
-    in that sample's `.metadata` (see `brainfusion.metadata.parse_name`). The atlas target sample is not
+    in that sample's `.metadata` (see `brainfusion.io.parse_name`). The atlas target sample is not
     matched against `name_pattern` since it isn't one of the experiment folders.
     """
     samples = []

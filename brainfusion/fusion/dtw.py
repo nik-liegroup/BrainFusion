@@ -60,9 +60,6 @@ def segmented_contour_dtw(contour1: np.ndarray, contour2: np.ndarray,
     cuts1 = sorted({p for s in seg_info1 if s["straight"] for p in (s["start"], s["end"])})
     cuts2 = sorted({p for s in seg_info2 if s["straight"] for p in (s["start"], s["end"])})
 
-    # Debugging
-    # plot_contour_with_curvature_and_straight(contour1, curv1, cuts1, straight_mask1)
-
     # --- If not enough segments, fall back to DTW ---
     num_segs = min(len(cuts1), len(cuts2))
     if num_segs < 2:
@@ -161,9 +158,9 @@ def dtw_with_curvature_penalty(contour1: np.ndarray, contour2: np.ndarray,
         First contour to be aligned (reference).
     contour2 : np.ndarray of shape (M, 2)
         Second contour to be matched against.
-    curvatures1 : np.ndarray of shape (N, 2)
+    curvatures1 : np.ndarray of shape (N,)
         Local curvature of reference contour.
-    curvatures2 : np.ndarray of shape (M, 2)
+    curvatures2 : np.ndarray of shape (M,)
         Local curvature of second contour
     dtw_curvature : float, optional (keyword-only)
         Weighting factor for curvature mismatch penalty in the DTW cost function.
@@ -265,24 +262,3 @@ def align_straight_segments(seg1, seg2):
 
     t_uniform = np.linspace(0, 1, max(len(seg1), len(seg2)))
     return interp_along_arc(seg1, t_uniform), interp_along_arc(seg2, t_uniform)
-
-
-def plot_contour_with_curvature_and_straight(contour, curvature, cuts, straight_mask):
-    import matplotlib.pyplot as plt
-    fig, ax = plt.subplots()
-    sc = ax.scatter(contour[:, 0], contour[:, 1],
-                    c=curvature, cmap='coolwarm', s=20, zorder=1)
-    plt.colorbar(sc, ax=ax, label="Curvature")
-
-    ax.scatter(contour[cuts, 0],
-               contour[cuts, 1],
-               c='blue', edgecolors='k', s=70, zorder=3, label="Cuts")
-
-    ax.scatter(contour[straight_mask, 0],
-               contour[straight_mask, 1],
-               c='orange', edgecolors='k', s=40, zorder=2, label="Straight segments")
-
-    ax.set_aspect('equal')
-    ax.legend()
-    ax.set_title("Contour curvature with cut points & straight segments")
-    plt.show()

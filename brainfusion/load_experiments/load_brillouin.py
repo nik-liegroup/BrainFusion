@@ -17,7 +17,7 @@ def load_brillouin_all(base_path, brillouin_variables, data_filename=None, trans
     Load every Brillouin experiment folder (name containing '#') found directly below `base_path`.
 
     See `load_brillouin_experiment` for the other parameters. If `name_pattern` is given, it is matched
-    against each folder's name (see `brainfusion.metadata.parse_name`) and the extracted fields are stored in
+    against each folder's name (see `brainfusion.io.parse_name`) and the extracted fields are stored in
     the sample's `.metadata`.
     """
     samples = []
@@ -56,7 +56,7 @@ def load_brillouin_experiment(folder_path, brillouin_variables, data_filename=No
       drawn in that image's pixel coordinates.
 
     If `name_pattern` is given, it is matched against the folder's name and the extracted fields are stored
-    in the sample's `.metadata` (see `brainfusion.metadata.parse_name`).
+    in the sample's `.metadata` (see `brainfusion.io.parse_name`).
     """
     folder_name = os.path.basename(os.path.normpath(folder_path))
 

@@ -17,7 +17,7 @@ def load_microscopy_all(folder_path, boundary_filename='BrainBoundary', landmark
     Load every .tif image in `folder_path`. See `load_microscopy_single` for the other parameters.
 
     If `name_pattern` is given, it is matched against each image's own filename (without extension) and the
-    extracted fields are stored in that sample's `.metadata` (see `brainfusion.metadata.parse_name`).
+    extracted fields are stored in that sample's `.metadata` (see `brainfusion.io.parse_name`).
     """
     tif_filenames = list_matching_files(folder_path, lambda f: f.lower().endswith('.tif'))
 

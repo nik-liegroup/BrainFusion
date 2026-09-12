@@ -40,7 +40,7 @@ def load_parquet_samples(folder_path: str, data_pattern: str, contour_pattern: s
         If given, randomly subsample each dataset to this many points (for a quick test run).
     name_pattern, name_converters
         If `name_pattern` is given, it is matched against each sample's filename and the extracted fields are
-        stored in that sample's `.metadata` (see `brainfusion.metadata.parse_name`).
+        stored in that sample's `.metadata` (see `brainfusion.io.parse_name`).
     """
     dataset_key = dataset_key or data_var
 
