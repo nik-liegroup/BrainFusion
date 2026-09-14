@@ -167,13 +167,11 @@ def match_contour_with_ellipse(a: np.ndarray, b: np.ndarray, rot_ang: float | No
     if ellipse_a is None or ellipse_b is None:
         raise ValueError("No ellipse could be fitted to one or both contours.")
 
-    # Extract translation fit parameter
     centre_a = -np.array(ellipse_a[0])  # Important: Ellipse fit centre does not necessary align with geometric mean!
     centre_b = -np.array(ellipse_b[0])
 
-    # Extract rotation angle as a fit parameter or use precomputed angle
     if rot_ang is None:
-        rot_ang = ellipse_b[2] - ellipse_a[2]  # Angle difference
+        rot_ang = ellipse_b[2] - ellipse_a[2]
         if rot_ang > 90:
             rot_ang = rot_ang - 180
         elif rot_ang < -90:
@@ -182,15 +180,12 @@ def match_contour_with_ellipse(a: np.ndarray, b: np.ndarray, rot_ang: float | No
 
     ang = rot_ang
 
-    # Extract semi-major and semi-minor axes
     axes_a = np.array(ellipse_a[1])
     axes_b = np.array(ellipse_b[1])
 
-    # Compute scaling factors for scaling in x and y after rotation
     scale_x = axes_b[0] / axes_a[0]  # Scaling factor along the major axis
     scale_y = axes_b[1] / axes_a[1]  # Scaling factor along the minor axis
 
-    # Define Transformation matrix for a and b
     affine_transformation_a = (AffineTransform(translation=(centre_a[0], centre_a[1])) +
                                AffineTransform(rotation=ang) +
                                AffineTransform(scale=(scale_x, scale_y))
@@ -225,21 +220,17 @@ def match_contour_with_bbox(a: np.ndarray, b: np.ndarray, rot_ang: float = 0) ->
     if not (isinstance(b, np.ndarray) and b.ndim == 2 and b.shape[1] == 2):
         raise ValueError("Input b must be a (N, 2) numpy array")
 
-    # Translate contours to their geometric centre
     centre_a = -np.mean(a, axis=0)
     a_cent = a + centre_a
     centre_b = -np.mean(b, axis=0)
     b_cent = b + centre_b
 
-    # Rotate contour
     rotation = AffineTransform(rotation=rot_ang)
     a_rot = rotation(a_cent)
 
-    # Get boundary box corner points
     source_points = extract_bbox_corners(a_rot)
     target_points = extract_bbox_corners(b_cent)
 
-    # Scale in x and y using the corner boundary box corner points
     dist_x_target = (target_points[3] - target_points[0])[0]
     dist_x_source = (source_points[3] - source_points[0])[0]
     scale_x = dist_x_target / dist_x_source if dist_x_source != 0 else 1
@@ -248,7 +239,6 @@ def match_contour_with_bbox(a: np.ndarray, b: np.ndarray, rot_ang: float = 0) ->
     dist_y_source = (source_points[1] - source_points[0])[1]
     scale_y = dist_y_target / dist_y_source if dist_y_source != 0 else 1
 
-    # Define Transformation matrix for a and b
     affine_transformation_a = (AffineTransform(translation=(centre_a[0], centre_a[1])) +
                                AffineTransform(rotation=rot_ang) +
                                AffineTransform(scale=(scale_x, scale_y))
@@ -318,20 +308,15 @@ def circularly_shift_contours(contours: List[np.ndarray], template_contour: np.n
     for i, contour in enumerate(contours):
         # Topologically orient contour
         if get_contour_orientation(contour) != orientation:
-            contour = contour[::-1]  # Reverse the order
+            contour = contour[::-1]
 
         if init_points[i] is not None:
-            # Find the closest initial point in init_points
             distances_to_init_points = np.linalg.norm(contour - init_points[i], axis=1)
-            shift_index = np.argmin(distances_to_init_points)  # Find the closest point
+            shift_index = np.argmin(distances_to_init_points)
         else:
-            # Calculate the Euclidean distance between the starting point of template_contour and all points in contour
             distances = np.linalg.norm(contour - template_contour[0, :], axis=1)
-
-            # Find the index of the point closest to the starting point of template_contour
             shift_index = np.argmin(distances)
 
-        # Circularly shift the contour to start from the selected point
         shifted_contour = np.roll(contour, -shift_index, axis=0)
 
         modified_contours.append(shifted_contour)

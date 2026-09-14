@@ -55,8 +55,10 @@ def load_microscopy_single(folder_path, filename, boundary_filename='BrainBounda
     with TiffFile(os.path.join(folder_path, filename)) as tif:
         image = tif.asarray()
         page = tif.pages[0]
-        x_res = page.coords['width'][1]
-        y_res = page.coords['height'][1]
+        # page.resolution is (XResolution, YResolution) in pixels-per-unit (the standard TIFF resolution
+        # tags) - invert to get the physical size of one pixel. Defaults to (1.0, 1.0) if unset.
+        res_x, res_y = page.resolution
+        x_res, y_res = 1 / res_x, 1 / res_y
 
     # Treat a single-channel image as one "channel" so the rest of this function doesn't need to branch on
     # dimensionality - channel numbering ('Channel_1', 'Channel_2', ...) comes out the same either way.

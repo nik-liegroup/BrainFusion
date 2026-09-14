@@ -4,7 +4,7 @@ import pytest
 from brainfusion.sample import Sample
 from brainfusion.fusion.core import brain_fusion
 from brainfusion.fusion.grouping import (list_groups, extract_groups, group_average_on_shared_grid,
-                                         extract_group_native_data)
+                                         extract_group_native_data, merge_keys)
 
 
 def circle_sample(cx, cy, r, value, n_contour=40, n_grid=8, filename="s", metadata=None):
@@ -101,3 +101,37 @@ class TestExtractGroupNativeData:
     def test_raises_for_unknown_group(self, two_group_analysis):
         with pytest.raises(ValueError, match="No samples found"):
             extract_group_native_data(two_group_analysis, "group", "value", groups=["C"])
+
+
+class TestMergeKeys:
+
+    def test_combines_two_fields_into_one_new_key(self):
+        samples = [circle_sample(0, 0, 1, value=1.0, metadata={"condition": "cond1", "modality": "AFM"}),
+                  circle_sample(0, 0, 1, value=1.0, metadata={"condition": "cond2", "modality": "Brillouin"})]
+
+        merged = merge_keys(samples, "group", ["condition", "modality"])
+        assert merged[0].metadata["group"] == "cond1_AFM"
+        assert merged[1].metadata["group"] == "cond2_Brillouin"
+
+    def test_keeps_original_fields_and_leaves_input_samples_untouched(self):
+        samples = [circle_sample(0, 0, 1, value=1.0, metadata={"condition": "cond1", "modality": "AFM"})]
+
+        merged = merge_keys(samples, "group", ["condition", "modality"])
+        assert merged[0].metadata == {"condition": "cond1", "modality": "AFM", "group": "cond1_AFM"}
+        assert "group" not in samples[0].metadata
+
+    def test_skips_keys_missing_on_a_given_sample_instead_of_raising(self):
+        # AFM's Sample never had a 'condition' (it wasn't split by condition) - merge_keys should just use
+        # whichever of keys_to_merge it does have, not raise a KeyError.
+        samples = [circle_sample(0, 0, 1, value=1.0, metadata={"modality": "AFM"}),
+                  circle_sample(0, 0, 1, value=1.0, metadata={"condition": "cond2", "modality": "Brillouin"})]
+
+        merged = merge_keys(samples, "group", ["condition", "modality"])
+        assert merged[0].metadata["group"] == "AFM"
+        assert merged[1].metadata["group"] == "cond2_Brillouin"
+
+    def test_custom_separator(self):
+        samples = [circle_sample(0, 0, 1, value=1.0, metadata={"condition": "cond1", "modality": "AFM"})]
+
+        merged = merge_keys(samples, "group", ["condition", "modality"], separator="-")
+        assert merged[0].metadata["group"] == "cond1-AFM"

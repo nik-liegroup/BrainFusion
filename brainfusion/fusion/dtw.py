@@ -221,9 +221,9 @@ def dtw_with_curvature_penalty(contour1: np.ndarray, contour2: np.ndarray,
         path.append((i - 1, j - 1))
         step = np.argmin([dtw_matrix[i - 1, j], dtw_matrix[i, j - 1], dtw_matrix[i - 1, j - 1]])
         if step == 0:
-            i -= 1  # Move up
+            i -= 1
         elif step == 1:
-            j -= 1  # Move left
+            j -= 1
         else:
             i -= 1  # Move diagonally
             j -= 1

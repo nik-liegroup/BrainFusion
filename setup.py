@@ -16,6 +16,7 @@ setup(
         'scipy >= 1.14.1',
         'scikit-image>=0.23',
         'shapely >=2.0.6',
+        'tifffile >= 2023.7.10',
         'frechetdist >= 0.6',
         'tqdm ~= 4.67.1'
     ],

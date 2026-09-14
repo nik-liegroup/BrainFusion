@@ -1,5 +1,5 @@
 """
-Case 4: match INDIVIDUAL experiments between two modalities one-to-one (e.g. animal #1's AFM measurement
+Case 5: match INDIVIDUAL experiments between two modalities one-to-one (e.g. animal #1's AFM measurement
 with animal #1's Brillouin measurement), instead of fusing each modality's whole cohort together first.
 This is just the regular fuse function, called once per matched pair - each pair only has 2 samples, so
 none of the group_field/pairwise-correlate helpers from Example_2/3 are needed here.

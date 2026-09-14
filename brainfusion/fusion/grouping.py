@@ -1,8 +1,44 @@
 """Splitting a fused analysis's samples into named groups (e.g. by condition or modality). Used internally by
 `brain_fusion`/`run_fusion`'s `group_field` argument, and directly for grouping by a field that wasn't chosen
-at fusion time."""
+at fusion time. `merge_keys` builds a combined group field BEFORE fusion, when the group identity you
+actually want is more than one metadata dimension at once (e.g. condition AND modality)."""
 
 import numpy as np
+
+from brainfusion.sample import replace
+
+
+def merge_keys(samples, new_key, keys_to_merge, separator="_"):
+    """
+    Return copies of `samples` with `new_key` added to their metadata, combining the values of whichever of
+    `keys_to_merge` each Sample actually has - e.g. `merge_keys(samples, "group", ["condition", "modality"])`
+    turns `{'condition': 'cond1', 'modality': 'AFM'}` into `{..., 'group': 'cond1_AFM'}`. A Sample missing
+    one of `keys_to_merge` (e.g. one modality's Samples were never split by condition) just uses whichever of
+    the keys it does have, instead of raising - so the same call works across Samples with different
+    metadata schemas.
+
+    Use this when the group identity you actually want to fuse/correlate by is a combination of independent
+    metadata dimensions - e.g. combining per-condition Samples from two modalities, where
+    `group_field='modality'` alone would wrongly pool every condition of the same modality together.
+
+    Parameters
+    ----------
+    samples : list of Sample
+    new_key : str
+        Metadata key to store the merged value under.
+    keys_to_merge : list of str
+        Existing metadata keys to combine, in order. Keys not present on a given Sample are skipped.
+    separator : str, default='_'
+        Joins the found values into one string.
+
+    Returns
+    -------
+    list of Sample
+    """
+    return [replace(s, metadata={**s.metadata,
+                                 new_key: separator.join(str(s.metadata[key]) for key in keys_to_merge
+                                                         if key in s.metadata)})
+           for s in samples]
 
 
 def list_groups(analysis, group_field):

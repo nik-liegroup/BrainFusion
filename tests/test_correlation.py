@@ -175,7 +175,11 @@ class TestCorrelateGroupsByDensity:
 
         results = correlate_groups_by_density(analysis, "modality", "value", radius=1.0)
         assert set(results.keys()) == {("sparse", "dense")}
-        assert results[("sparse", "dense")]["pearson_correlation"] == pytest.approx(1.0, abs=1e-6)
+        result = results[("sparse", "dense")]
+        assert result["pearson_correlation"] == pytest.approx(1.0, abs=1e-6)
+        np.testing.assert_array_equal(result["contour"], contour)
+        np.testing.assert_array_equal(result["dense_grid"], dense_grid)
+        np.testing.assert_array_equal(result["dense_data"], dense_data)
 
 
 class TestAverageWithinRadius:
@@ -223,8 +227,13 @@ class TestCorrelateAroundReferenceGrid:
                                                   contour, radius=1.0)
         assert result["pearson_correlation"] == pytest.approx(1.0, abs=1e-6)
         assert result["n_points"] == 3
-        assert result["reference_valid"].tolist() == pytest.approx([1.0, 2.0, 3.0])
-        assert result["other_valid"].tolist() == pytest.approx([2.0, 4.0, 6.0])
+        # name_a/name_b (default 'reference'/'other') hold the FULL (inside-contour) data, unmasked by
+        # 'valid_mask' - here every reference point has a match, so masking is a no-op, but the keys
+        # themselves are the full arrays, matching 'reference_grid'/'radii' 1:1.
+        assert result["reference"].tolist() == pytest.approx([1.0, 2.0, 3.0])
+        assert result["other"].tolist() == pytest.approx([2.0, 4.0, 6.0])
+        assert len(result["reference"]) == len(result["reference_grid"]) == len(result["radii"])
+        np.testing.assert_array_equal(result["valid_mask"], [True, True, True])
 
     def test_raises_when_nothing_within_radius(self):
         reference_grid = np.array([[0.0, 0.0], [5.0, 0.0]])

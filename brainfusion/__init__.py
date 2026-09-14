@@ -16,7 +16,7 @@ from brainfusion.io import (read_parquet_file, append_parquet_file, export_analy
 from brainfusion.utils import mask_contour
 from brainfusion.fusion import (brain_fusion, run_fusion, fuse_boundaries, fuse_grids, fuse_measurement_datasets,
                                 list_groups, extract_groups, group_average_on_shared_grid,
-                                extract_group_native_data)
+                                extract_group_native_data, merge_keys)
 
 __all__ = [
     "Sample",
@@ -48,6 +48,7 @@ __all__ = [
     "extract_groups",
     "group_average_on_shared_grid",
     "extract_group_native_data",
+    "merge_keys",
     "correlate_on_shared_grid",
     "pairwise_correlate_groups",
     "pairwise_correlate_by_density",

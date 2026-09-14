@@ -50,14 +50,14 @@ class TestLoadFusedAnalysis:
         np.testing.assert_allclose(by_condition["Control"].dataset["modulus"], 1.0)
         np.testing.assert_allclose(by_condition["CS"].dataset["modulus"], 2.0)
 
-    def test_value_key_renames_dataset_and_preserves_original_key_name_by_default(self, tmp_path):
+    def test_rename_key_renames_dataset_and_preserves_original_key_name_by_default(self, tmp_path):
         path = tmp_path / "analysis.h5"
         write_analysis(path)
 
         default_key = load_fused_analysis(str(path), key_quant="modulus")
         assert set(default_key[0].dataset.keys()) == {"modulus"}
 
-        renamed = load_fused_analysis(str(path), key_quant="modulus", value_key="value")
+        renamed = load_fused_analysis(str(path), key_quant="modulus", rename_key="value")
         assert set(renamed[0].dataset.keys()) == {"value"}
         np.testing.assert_allclose(renamed[0].dataset["value"], default_key[0].dataset["modulus"])
 

@@ -117,14 +117,18 @@ def correlate_around_reference_grid(reference_data, reference_grid, other_data, 
     `measurement_datasets` entries from one shared `run_fusion` call) - two samples' own raw native grids
     aren't spatially comparable at all before that.
 
-    Only reference points inside `contour` are used. See `plot_correlation_with_radii` to sanity-check the
-    chosen radii visually before trusting the correlation.
+    Only reference points inside `contour` are used, but - same as `correlate_on_shared_grid` - the
+    correlation itself is restricted internally while the RETURNED data stays full (here: every
+    inside-contour reference point, including ones with no radius match); apply 'valid_mask' yourself at
+    whichever point you actually need the masked values, e.g. `result[name_a][result['valid_mask']]`. See
+    `plot_correlation_with_radii` to sanity-check the chosen radii visually before trusting the correlation.
 
     Returns
     -------
     dict with keys 'pearson_correlation', 'pearson_p_value', 'n_points', 'valid_mask', 'radii',
-    'reference_grid' (already restricted to points inside `contour`), and f'{name_a}_valid'/f'{name_b}_valid'
-    (the two datasets at the valid reference points, ready for a scatter/plotting function).
+    'reference_grid' (restricted to points inside `contour`, matching 'radii'/name_a/name_b 1:1), name_a
+    (the reference data, inside-contour only) and name_b (the radius-averaged 'other' value at each
+    reference point, NaN where nothing fell within radius).
     """
     inside = mask_contour(contour, reference_grid)
     reference_grid = reference_grid[inside]
@@ -144,8 +148,8 @@ def correlate_around_reference_grid(reference_data, reference_grid, other_data, 
         'valid_mask': valid,
         'radii': radii,
         'reference_grid': reference_grid,
-        f'{name_a}_valid': reference_data[valid],
-        f'{name_b}_valid': avg_other[valid],
+        name_a: reference_data,
+        name_b: avg_other,
     }
 
 
@@ -157,7 +161,7 @@ def analyse_correlation_percentile(data_a, data_b, percentile_a=50, percentile_b
     chance to also be high-myelin points", independent of the linear Pearson relationship.
 
     `data_a`/`data_b` must already be paired point-by-point - e.g. `correlate_around_reference_grid`'s or
-    `correlate_on_shared_grid`'s `f'{name_a}_valid'`/`f'{name_b}_valid'` outputs.
+    `correlate_on_shared_grid`'s name_a/name_b outputs, masked by their own 'valid_mask'.
     """
     data_a, data_b = np.asarray(data_a), np.asarray(data_b)
     if len(data_a) < 2:
@@ -304,13 +308,20 @@ def correlate_groups_by_density(analysis, group_field, key_quant, groups=None, p
 
     Returns
     -------
-    dict {(sparser_name, denser_name): result}
-        See `pairwise_correlate_by_density`.
+    dict {(sparse_name, dense_name): result}
+        Each `pairwise_correlate_by_density` result, plus 'contour' and 'dense_grid'/'dense_data' (the denser
+        side's own raw grid/data, before radius-averaging) so plotting (`plot_correlation_with_radii`,
+        `plot_norm_corr`) can pull everything it needs straight off the result instead of the caller
+        re-deriving it.
     """
     datasets = extract_group_native_data(analysis, group_field, key_quant, groups=groups)
     contour = analysis['template_contours'][0]
-    return pairwise_correlate_by_density(datasets, contour, priority=priority, radius=radius,
-                                         average_func=average_func)
+    results = pairwise_correlate_by_density(datasets, contour, priority=priority, radius=radius,
+                                            average_func=average_func)
+    for (sparse_name, dense_name), result in results.items():
+        result['contour'] = contour
+        result['dense_grid'], result['dense_data'] = datasets[dense_name]
+    return results
 
 
 def pairwise_correlate_by_density(datasets, contour, priority=None, radius='max', average_func=np.nanmean):
@@ -343,8 +354,8 @@ def pairwise_correlate_by_density(datasets, contour, priority=None, radius='max'
 
     Returns
     -------
-    dict {(sparser_name, denser_name): result}
-        One `correlate_around_reference_grid` result per unordered pair, keyed reference-name first.
+    dict {(sparse_name, dense_name): result}
+        One `correlate_around_reference_grid` result per unordered pair, keyed sparse-name first.
     """
     names = list(datasets.keys())
     rank = {name: priority.index(name) for name in names} if priority is not None else None
@@ -352,15 +363,15 @@ def pairwise_correlate_by_density(datasets, contour, priority=None, radius='max'
     results = {}
     for name_a, name_b in combinations(names, 2):
         if rank is not None:
-            ref_name, other_name = (name_a, name_b) if rank[name_a] < rank[name_b] else (name_b, name_a)
+            sparse_name, dense_name = (name_a, name_b) if rank[name_a] < rank[name_b] else (name_b, name_a)
         else:
-            ref_name, other_name = (name_a, name_b) if len(datasets[name_a][0]) <= len(datasets[name_b][0]) \
+            sparse_name, dense_name = (name_a, name_b) if len(datasets[name_a][0]) <= len(datasets[name_b][0]) \
                 else (name_b, name_a)
 
-        ref_grid, ref_data = datasets[ref_name]
-        other_grid, other_data = datasets[other_name]
-        results[(ref_name, other_name)] = correlate_around_reference_grid(
-            ref_data, ref_grid, other_data, other_grid, contour, radius=radius, average_func=average_func,
-            name_a=ref_name, name_b=other_name)
+        sparse_grid, sparse_data = datasets[sparse_name]
+        dense_grid, dense_data = datasets[dense_name]
+        results[(sparse_name, dense_name)] = correlate_around_reference_grid(
+            sparse_data, sparse_grid, dense_data, dense_grid, contour, radius=radius, average_func=average_func,
+            name_a=sparse_name, name_b=dense_name)
 
     return results
