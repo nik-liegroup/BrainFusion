@@ -6,13 +6,15 @@ from brainfusion.fusion.match_contours import interpolate_contour, align_contour
 from brainfusion.fusion.average_contours import find_average_contour
 from brainfusion.fusion.transform_2Dmap import extend_grid, transform_grid2contour
 from brainfusion.fusion.interpolation import nearest_neighbour_interp, fit_coordinates_gmm
+from brainfusion.fusion.grouping import group_average_on_shared_grid
 from brainfusion.io import check_parameters, export_analysis, import_analysis
 from brainfusion.utils import regular_grid_on_bbox
 from brainfusion.sample import Sample, replace
 
 
 def brain_fusion(samples: list[Sample], contour_template="average", contour_interp_n=200, clustering='Mean',
-                 outline_averaging='star_domain', smooth='auto', curvature=0.5, fit_routine='ellipse', **kwargs) -> dict:
+                 outline_averaging='star_domain', smooth='auto', curvature=0.5, fit_routine='ellipse',
+                 group_field=None, **kwargs) -> dict:
     """
     Align, deform and interpolate a list of samples onto a common template shape, then average them.
 
@@ -39,12 +41,20 @@ def brain_fusion(samples: list[Sample], contour_template="average", contour_inte
         DTW curvature-mismatch penalty used for boundary matching.
     fit_routine : str, default='ellipse'
         Initial affine contour alignment method: "ellipse" or "bbox".
+    group_field : str, optional
+        If given, additionally split the fused samples by `.metadata[group_field]` (e.g. 'condition') and
+        average each group separately on the same shared grid, right here at fusion time - result stored as
+        `group_field`/`group_datasets` (see `group_average_on_shared_grid`) so it's cached, reused instead
+        of recomputed by anything that asks for one group's map afterward (`plot_average_map`,
+        `pairwise_correlate_groups`, ...), and persisted through `export_analysis`/`import_analysis`.
+        Requires `clustering` to be 'Mean', 'Median' or 'Sum' (not 'GMM').
 
     Returns
     -------
     structured_data : dict
         All intermediate and final results (aligned/matched contours, original and transformed grids, warped
-        datasets, the averaged dataset on the common grid, affine transformation matrices, background images).
+        datasets, the averaged dataset on the common grid, affine transformation matrices, background images,
+        and, if `group_field` was given, `group_field` and `group_datasets`).
     """
     print("Starting brainfusion analysis.")
 
@@ -72,6 +82,12 @@ def brain_fusion(samples: list[Sample], contour_template="average", contour_inte
         'measurement_interpolated_grid_shape': ext_grid_shape,
         'measurement_interpolated_dataset': avg_data,
     })
+
+    if group_field is not None:
+        _, _, group_datasets = group_average_on_shared_grid(structured_data, group_field)
+        structured_data['group_field'] = group_field
+        structured_data['group_datasets'] = group_datasets
+
     return structured_data
 
 

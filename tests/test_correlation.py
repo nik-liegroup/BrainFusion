@@ -3,10 +3,11 @@ import pytest
 
 from brainfusion.sample import Sample
 from brainfusion.fusion.core import brain_fusion
-from brainfusion.correlation import (list_groups, group_average_on_shared_grid, correlate_on_shared_grid,
-                                     pairwise_correlate_groups, average_within_radius, compute_max_radius,
-                                     correlate_around_reference_grid, analyse_correlation_percentile,
-                                     conditional_probability_table)
+from brainfusion.fusion.grouping import group_average_on_shared_grid
+from brainfusion.correlation import (correlate_on_shared_grid, pairwise_correlate_groups,
+                                     pairwise_correlate_by_density, correlate_groups, correlate_groups_by_density,
+                                     average_within_radius, compute_max_radius, correlate_around_reference_grid,
+                                     analyse_correlation_percentile, conditional_probability_table)
 
 
 def circle_sample(cx, cy, r, value, n_contour=40, n_grid=8, filename="s", metadata=None):
@@ -16,46 +17,6 @@ def circle_sample(cx, cy, r, value, n_contour=40, n_grid=8, filename="s", metada
     grid = np.column_stack((cx + (r / 2) * np.cos(grid_theta), cy + (r / 2) * np.sin(grid_theta)))
     dataset = {"value": np.full(n_grid, value)}
     return Sample(contour=contour, grid=grid, dataset=dataset, filename=filename, metadata=metadata or {})
-
-
-@pytest.fixture
-def two_group_analysis():
-    """Two groups ('A' constant value 1.0, 'B' constant value 2.0), 2 near-identical samples each."""
-    samples = [
-        circle_sample(0, 0, 1, value=1.0, filename="a1", metadata={"group": "A"}),
-        circle_sample(0.05, 0, 1.02, value=1.0, filename="a2", metadata={"group": "A"}),
-        circle_sample(-0.03, 0.02, 0.98, value=2.0, filename="b1", metadata={"group": "B"}),
-        circle_sample(0.02, -0.03, 1.01, value=2.0, filename="b2", metadata={"group": "B"}),
-    ]
-    return brain_fusion(samples, contour_template="average", contour_interp_n=40, clustering="Mean")
-
-
-class TestListGroups:
-
-    def test_lists_unique_groups_sorted(self, two_group_analysis):
-        assert list_groups(two_group_analysis, "group") == ["A", "B"]
-
-
-class TestGroupAverageOnSharedGrid:
-
-    def test_splits_into_correct_per_group_constant_values(self, two_group_analysis):
-        grid, contour, group_maps = group_average_on_shared_grid(two_group_analysis, "group")
-        assert set(group_maps.keys()) == {"A", "B"}
-        np.testing.assert_allclose(group_maps["A"]["value"], 1.0)
-        np.testing.assert_allclose(group_maps["B"]["value"], 2.0)
-        assert grid.shape[1] == 2
-        assert contour.shape[1] == 2
-
-    def test_raises_for_gmm_clustering(self):
-        samples = [circle_sample(0, 0, 1, value=1.0, filename="a", metadata={"group": "A"}),
-                  circle_sample(0.1, 0, 1, value=2.0, filename="b", metadata={"group": "B"})]
-        analysis = brain_fusion(samples, clustering="GMM", contour_interp_n=40)
-        with pytest.raises(ValueError, match="clustering"):
-            group_average_on_shared_grid(analysis, "group")
-
-    def test_raises_for_unknown_group(self, two_group_analysis):
-        with pytest.raises(ValueError, match="No samples found"):
-            group_average_on_shared_grid(two_group_analysis, "group", groups=["C"])
 
 
 class TestCorrelateOnSharedGrid:
@@ -80,6 +41,16 @@ class TestCorrelateOnSharedGrid:
         assert result["n_points"] == 2
         np.testing.assert_array_equal(result["valid_mask"], [True, True, False])
 
+    def test_returns_full_unmasked_datasets_under_their_own_names(self):
+        grid = np.array([[0.0, 0.0], [1.0, 0.0], [100.0, 100.0]])
+        contour = np.array([[-1, -1], [4, -1], [4, 1], [-1, 1], [-1, -1]])
+        data_a = np.array([1.0, 2.0, np.nan])
+        data_b = np.array([2.0, 4.0, 999.0])
+
+        result = correlate_on_shared_grid(data_a, data_b, grid, contour, name_a="AFM", name_b="Brillouin")
+        np.testing.assert_array_equal(result["AFM"], data_a)  # unmasked - still length 3, NaN included
+        np.testing.assert_array_equal(result["Brillouin"], data_b)
+
     def test_raises_when_too_few_valid_points(self):
         grid = np.array([[0.0, 0.0], [1.0, 0.0]])
         contour = np.array([[-1, -1], [4, -1], [4, 1], [-1, 1], [-1, -1]])
@@ -98,6 +69,113 @@ class TestPairwiseCorrelateGroups:
         grid, contour, group_maps = group_average_on_shared_grid(analysis, "group")
         pairs = pairwise_correlate_groups(group_maps, grid, contour, "value")
         assert set(pairs.keys()) == {("A", "B"), ("A", "C"), ("B", "C")}
+
+
+class TestCorrelateGroups:
+
+    def test_wires_group_datasets_and_shared_grid_correlation_together(self):
+        grid = np.array([[0.0, 0.0], [1.0, 0.0], [2.0, 0.0], [3.0, 0.0]])
+        contour = np.array([[-1, -1], [4, -1], [4, 1], [-1, 1], [-1, -1]])
+        analysis = {
+            "group_datasets": {
+                "A": {"value": np.array([1.0, 2.0, 3.0, 4.0])},
+                "B": {"value": np.array([2.0, 4.0, 6.0, 8.0])},
+            },
+            "measurement_interpolated_grid": grid,
+            "template_contours": [contour],
+        }
+
+        results = correlate_groups(analysis, "value")
+        assert set(results.keys()) == {("A", "B")}
+        assert results[("A", "B")]["pearson_correlation"] == pytest.approx(1.0)
+        np.testing.assert_array_equal(results[("A", "B")]["grid"], grid)
+        np.testing.assert_array_equal(results[("A", "B")]["contour"], contour)
+
+    def test_raises_when_not_fused_with_group_field(self):
+        analysis = {"measurement_interpolated_grid": None, "template_contours": [None]}
+        with pytest.raises(ValueError, match="group_field"):
+            correlate_groups(analysis, "value")
+
+
+class TestPairwiseCorrelateByDensity:
+
+    @staticmethod
+    def _cloud(centers, values, n_per_center, scale, rng):
+        grid = np.concatenate([c + rng.normal(scale=0.1, size=(n_per_center, 2)) for c in centers])
+        data = np.concatenate([np.full(n_per_center, scale * v) for v in values])
+        return grid, data
+
+    def test_auto_picks_sparser_side_as_reference_by_point_count(self):
+        centers = np.array([[0.0, 0.0], [5.0, 0.0], [10.0, 0.0]])
+        values = np.array([1.0, 2.0, 3.0])
+        rng = np.random.default_rng(0)
+        contour = np.array([[-5, -5], [15, -5], [15, 5], [-5, 5], [-5, -5]])
+
+        datasets = {
+            "sparse": (centers, values),  # 3 points - fewest, so it should be auto-picked as reference
+            "dense": self._cloud(centers, values, n_per_center=20, scale=2.0, rng=rng),
+        }
+
+        results = pairwise_correlate_by_density(datasets, contour, radius=1.0)
+        assert set(results.keys()) == {("sparse", "dense")}
+        assert results[("sparse", "dense")]["pearson_correlation"] == pytest.approx(1.0, abs=1e-6)
+
+    def test_priority_overrides_point_count(self):
+        centers = np.array([[0.0, 0.0], [5.0, 0.0], [10.0, 0.0]])
+        values = np.array([1.0, 2.0, 3.0])
+        rng = np.random.default_rng(0)
+        contour = np.array([[-5, -5], [15, -5], [15, 5], [-5, 5], [-5, -5]])
+
+        datasets = {
+            "many_points": self._cloud(centers, values, n_per_center=20, scale=2.0, rng=rng),
+            "fewer_points": self._cloud(centers, values, n_per_center=5, scale=3.0, rng=rng),
+        }
+
+        # By point count, "fewer_points" (15) would normally be picked as the reference over "many_points"
+        # (60) - force the opposite ordering via priority instead.
+        results = pairwise_correlate_by_density(datasets, contour, priority=["many_points", "fewer_points"],
+                                                 radius=1.0)
+        assert set(results.keys()) == {("many_points", "fewer_points")}
+        result = results[("many_points", "fewer_points")]
+        assert len(result["reference_grid"]) == 60  # every "many_points" point, since it was forced as reference
+        assert result["pearson_correlation"] == pytest.approx(1.0, abs=1e-6)
+
+    def test_covers_every_pair_for_three_datasets(self):
+        centers = np.array([[0.0, 0.0], [5.0, 0.0], [10.0, 0.0]])
+        values = np.array([1.0, 2.0, 3.0])
+        rng = np.random.default_rng(0)
+        contour = np.array([[-5, -5], [15, -5], [15, 5], [-5, 5], [-5, -5]])
+
+        datasets = {
+            "sparse": (centers, values),
+            "medium": self._cloud(centers, values, n_per_center=10, scale=2.0, rng=rng),
+            "dense": self._cloud(centers, values, n_per_center=30, scale=3.0, rng=rng),
+        }
+
+        results = pairwise_correlate_by_density(datasets, contour, radius=1.0)
+        assert set(results.keys()) == {("sparse", "medium"), ("sparse", "dense"), ("medium", "dense")}
+
+
+class TestCorrelateGroupsByDensity:
+
+    def test_wires_native_extraction_and_density_correlation_together(self):
+        centers = np.array([[0.0, 0.0], [5.0, 0.0], [10.0, 0.0]])
+        values = np.array([1.0, 2.0, 3.0])
+        rng = np.random.default_rng(0)
+        dense_grid = np.concatenate([c + rng.normal(scale=0.1, size=(20, 2)) for c in centers])
+        dense_data = np.concatenate([np.full(20, 2 * v) for v in values])
+        contour = np.array([[-5, -5], [15, -5], [15, 5], [-5, 5], [-5, -5]])
+
+        analysis = {
+            "measurement_metadata": [{"modality": "sparse"}, {"modality": "dense"}],
+            "measurement_trafo_grids": [centers, dense_grid],
+            "measurement_datasets": [{"value": values}, {"value": dense_data}],
+            "template_contours": [contour],
+        }
+
+        results = correlate_groups_by_density(analysis, "modality", "value", radius=1.0)
+        assert set(results.keys()) == {("sparse", "dense")}
+        assert results[("sparse", "dense")]["pearson_correlation"] == pytest.approx(1.0, abs=1e-6)
 
 
 class TestAverageWithinRadius:

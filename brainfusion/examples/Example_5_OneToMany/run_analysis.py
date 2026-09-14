@@ -12,14 +12,15 @@ template coordinate space first, via one shared `run_fusion` call, before radius
 
 Loops per myelin animal rather than pooling myelin first - keeps AFM correlated against each myelin animal
 individually. If the myelin images ARE from the same animals as the AFM measurements, this preserves that
-per-animal pairing; if not (unpaired cohorts), average the per-animal correlations afterward, or pool myelin
-into a single averaged map first via `Example_3`'s `group_average_on_shared_grid` path instead.
+per-animal pairing; if not (unpaired cohorts), average the per-animal correlations afterward, or fuse the
+myelin samples into their own averaged analysis.h5 first (own `run_fusion` call, see Example_1) and correlate
+the two files' own average grids directly instead - see Example_3.
 """
 
 import os
 
-from brainfusion import (load_fused_analysis, load_microscopy_all, run_fusion, plot_brainfusion_results,
-                         correlate_around_reference_grid, plot_correlation_with_radii)
+from brainfusion import (load_fused_analysis, load_microscopy_all, run_fusion, plot_sample_warps,
+                         extract_group_native_data, correlate_around_reference_grid, plot_correlation_with_radii)
 from brainfusion.sample import replace
 
 here = os.path.dirname(__file__)
@@ -41,13 +42,11 @@ FUSION_KWARGS = dict(contour_template="average", outline_averaging="median", con
 analysis = run_fusion(afm_samples + myelin_samples, FUSION_KWARGS,
                       results_path=os.path.join(results_folder, "analysis.h5"))
 
-plot_brainfusion_results(analysis, results_folder, key_quant=value_key, cmap="hot", cbar_label=value_key)
+plot_sample_warps(analysis, results_folder, key_quant=value_key, cmap="hot", cbar_label=value_key)
 
-# `measurement_datasets`/`measurement_trafo_grids` are each sample's own points, warped into the shared
-# template space but NOT resampled onto any shared grid - exactly what radius-matching needs. AFM is
-# whichever index it landed at (0, since it was listed first above).
-afm_grid = analysis["measurement_trafo_grids"][0]
-afm_data = analysis["measurement_datasets"][0][value_key]
+# AFM's own native (non-resampled) grid, pulled by its 'modality' tag rather than assuming which index it
+# landed at.
+afm_grid, afm_data = extract_group_native_data(analysis, "modality", value_key, groups=["AFM"])["AFM"]
 contour = analysis["template_contours"][0]
 
 for i, myelin_sample in enumerate(myelin_samples, start=len(afm_samples)):

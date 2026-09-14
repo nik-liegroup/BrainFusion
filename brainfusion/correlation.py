@@ -6,87 +6,27 @@ from scipy.spatial import cKDTree
 from scipy.stats import pearsonr, fisher_exact
 
 from brainfusion.utils import mask_contour
-
-
-def list_groups(analysis, group_field):
-    """List the distinct values found under `metadata[group_field]` across an analysis's samples."""
-    return sorted({str(m[group_field]) for m in analysis['measurement_metadata']})
-
-
-def group_average_on_shared_grid(analysis, group_field, groups=None):
-    """
-    Split a pooled `run_fusion`/`brain_fusion` result into per-group averaged maps that all live on the
-    analysis's own shared grid, using each sample's `.metadata[group_field]` (e.g. `group_field='condition'`
-    to split a pooled Control+CS fusion back into a 'Control' and a 'CS' average).
-
-    Every dataset key present on the samples (e.g. 'modulus' and, if loaded, 'beta_pyforce') is averaged in
-    one pass - there is no per-quantity cost to computing them all, so there's no reason to ask for just
-    one up front. Pull out whichever key you need downstream, e.g. `group_maps['Control']['modulus']`.
-
-    Because every sample was already resampled onto the same `measurement_interpolated_grid` inside
-    `fuse_grids` (stored as `measurement_trafo_datasets`), the returned group averages land on identical
-    grid points with no extra spatial matching needed - pass them straight to `correlate_on_shared_grid` or
-    `pairwise_correlate_groups`.
-
-    Only works when `clustering` was 'Mean', 'Median' or 'Sum': 'GMM' clustering builds its own
-    data-driven grid instead of resampling every sample onto one shared grid, so there is nothing here to
-    split by group.
-
-    Parameters
-    ----------
-    analysis : dict
-        A `run_fusion`/`brain_fusion` result (pooled across every group you want to compare).
-    group_field : str
-        Key into each sample's `.metadata` dict to group by, e.g. 'condition'.
-    groups : list, optional
-        Which group values to compute, and in what order. Defaults to every unique value found
-        (see `list_groups`).
-
-    Returns
-    -------
-    grid : (P, 2) array
-        The shared grid every group average lives on.
-    contour : (N, 2) array
-        The analysis's template contour.
-    group_maps : dict {group_value: {key: (P,) array}}
-        `nanmean` of every dataset key across each group's samples.
-    """
-    per_sample = analysis.get('measurement_trafo_datasets')
-    if not per_sample or per_sample[0] is None:
-        raise ValueError("This analysis has no per-sample data resampled onto a shared grid - re-run "
-                         "run_fusion/brain_fusion with clustering='Mean', 'Median' or 'Sum' (not 'GMM').")
-
-    values = np.array([m[group_field] for m in analysis['measurement_metadata']])
-    groups = list_groups(analysis, group_field) if groups is None else groups
-    keys = per_sample[0].keys()
-
-    group_maps = {}
-    for group in groups:
-        sample_idx = np.where(values == group)[0]
-        if len(sample_idx) == 0:
-            raise ValueError(f"No samples found with metadata['{group_field}'] == '{group}'.")
-        group_maps[group] = {key: np.nanmean(np.array([per_sample[i][key] for i in sample_idx]), axis=0)
-                             for key in keys}
-
-    return analysis['measurement_interpolated_grid'], analysis['template_contours'][0], group_maps
+from brainfusion.fusion.grouping import extract_groups, extract_group_native_data
 
 
 def correlate_on_shared_grid(data_a, data_b, grid, contour, name_a='A', name_b='B'):
     """
     Pearson-correlate two datasets that already live on the exact same grid, point-by-point.
 
-    Both `group_average_on_shared_grid` (splitting one pooled fusion into per-group averages) and
-    `load_fused_analysis` (loading one or more previously-fused analyses back in as `Sample`s, then
-    re-fusing them together - e.g. two separately-fused modalities) land their outputs on a shared grid,
-    so this is the one function that does the actual correlation once you have two such datasets.
+    Both `brainfusion.fusion.grouping.group_average_on_shared_grid` (splitting one pooled fusion into
+    per-group averages) and `load_fused_analysis` (loading one or more previously-fused analyses back in as
+    `Sample`s, then re-fusing them together - e.g. two separately-fused modalities) land their outputs on a
+    shared grid, so this is the one function that does the actual correlation once you have two such
+    datasets.
 
-    Restricts the comparison to points inside `contour` with valid (non-NaN) data in both datasets.
+    Restricts the correlation itself to points inside `contour` with valid (non-NaN) data in both datasets,
+    but returns the two FULL datasets unmasked - apply 'valid_mask' yourself at whichever point you actually
+    need the masked values (e.g. `data[result['valid_mask']]` right before plotting).
 
     Returns
     -------
-    dict with keys 'pearson_correlation', 'pearson_p_value', 'n_points', 'valid_mask',
-    f'{name_a}_valid' and f'{name_b}_valid' (the two datasets, already indexed down to the valid points -
-    ready to hand to a scatter/plotting function).
+    dict with keys 'pearson_correlation', 'pearson_p_value', 'n_points', 'valid_mask', name_a and name_b
+    (the two full, unmasked datasets as given).
     """
     data_a, data_b = np.asarray(data_a, dtype=float), np.asarray(data_b, dtype=float)
     inside = mask_contour(contour, grid)
@@ -101,8 +41,8 @@ def correlate_on_shared_grid(data_a, data_b, grid, contour, name_a='A', name_b='
         'pearson_p_value': p_value,
         'n_points': int(valid.sum()),
         'valid_mask': valid,
-        f'{name_a}_valid': data_a[valid],
-        f'{name_b}_valid': data_b[valid],
+        name_a: data_a,
+        name_b: data_b,
     }
 
 
@@ -305,3 +245,122 @@ def pairwise_correlate_groups(group_maps, grid, contour, key_quant, groups=None)
             name_a=group_a, name_b=group_b)
         for group_a, group_b in combinations(groups, 2)
     }
+
+
+def correlate_groups(analysis, key_quant, groups=None):
+    """
+    Pearson-correlate every pair of an analysis's groups on their shared grid - the `analysis`-level
+    counterpart of `pairwise_correlate_groups`, so callers only need the analysis itself plus which key to
+    correlate. Requires `analysis` to have been fused with `run_fusion(..., group_field=...)`, so
+    `group_datasets` is already baked in (no separate extraction step).
+
+    Parameters
+    ----------
+    analysis : dict
+        A `run_fusion`/`brain_fusion` result, fused with `group_field=...`.
+    key_quant : str
+        Dataset key to correlate.
+    groups : list, optional
+        Which groups to include, and in what order. Defaults to `extract_groups(analysis)`.
+
+    Returns
+    -------
+    dict {(group_a, group_b): result}
+        Each `pairwise_correlate_groups` result, plus 'grid' and 'contour' (the same shared grid/contour
+        every pair was correlated on) so plotting (`plot_correlation_masks`, `plot_norm_corr`) can pull
+        everything it needs straight off the result instead of the caller re-fetching them from `analysis`.
+    """
+    groups = extract_groups(analysis) if groups is None else groups
+    grid = analysis['measurement_interpolated_grid']
+    contour = analysis['template_contours'][0]
+    results = pairwise_correlate_groups(analysis['group_datasets'], grid, contour, key_quant, groups=groups)
+    for result in results.values():
+        result['grid'] = grid
+        result['contour'] = contour
+    return results
+
+
+def correlate_groups_by_density(analysis, group_field, key_quant, groups=None, priority=None, radius='max',
+                                average_func=np.nanmean):
+    """
+    Pearson-correlate an analysis's groups whose native point densities differ too much to share one grid -
+    the `analysis`-level counterpart of `pairwise_correlate_by_density`, so callers only need the analysis
+    itself plus which metadata field to split by. Splits `analysis` by `group_field` at NATIVE
+    (non-resampled) resolution via `extract_group_native_data`, then radius-matches every pair.
+
+    Parameters
+    ----------
+    analysis : dict
+        A `run_fusion`/`brain_fusion` result covering every group to compare - they must already be warped
+        into the same template coordinate space via one shared `run_fusion` call. `group_field` does NOT
+        need to be the field `run_fusion` was fused with, if any (e.g. group by 'modality' post-hoc even if
+        `run_fusion` itself used `group_field='condition'`).
+    group_field : str
+        Key into each sample's `.metadata` dict to group by, e.g. 'modality'.
+    key_quant : str
+        Dataset key to correlate.
+    groups, priority, radius, average_func :
+        Passed through to `extract_group_native_data`/`pairwise_correlate_by_density`.
+
+    Returns
+    -------
+    dict {(sparser_name, denser_name): result}
+        See `pairwise_correlate_by_density`.
+    """
+    datasets = extract_group_native_data(analysis, group_field, key_quant, groups=groups)
+    contour = analysis['template_contours'][0]
+    return pairwise_correlate_by_density(datasets, contour, priority=priority, radius=radius,
+                                         average_func=average_func)
+
+
+def pairwise_correlate_by_density(datasets, contour, priority=None, radius='max', average_func=np.nanmean):
+    """
+    Pearson-correlate every pair in `datasets` whose point densities differ too much to share one grid -
+    generalizes `correlate_around_reference_grid` (built for exactly 2 datasets) to N, e.g. 3+ modalities or
+    the groups returned by `brainfusion.fusion.grouping.extract_group_native_data`.
+
+    For each pair, the SPARSER dataset (fewer points) is used as the reference grid and the denser one is
+    radius-averaged down onto it - see `correlate_around_reference_grid`'s docstring for why this direction
+    matters. With only 2 datasets, comparing point counts always picks the right one automatically; with 3+,
+    pairwise point counts can disagree with the "true" overall density ordering (e.g. A happens to have more
+    points than B in this particular scan, even though B's imaging modality is intrinsically denser) - pass
+    `priority` (every name in `datasets`, SPARSEST first) to fix the ordering explicitly instead of trusting
+    point counts pair-by-pair.
+
+    Parameters
+    ----------
+    datasets : dict {name: (grid, data)}
+        E.g. from `extract_group_native_data`, or built by hand from separate analyses' own
+        `measurement_interpolated_grid`/`measurement_interpolated_dataset` (each already warped into the
+        same template coordinate space via one shared `run_fusion` call).
+    contour : array
+        Template contour shared by every dataset.
+    priority : list of str, optional
+        Every key of `datasets`, sparsest first. Defaults to auto-picking the sparser side of each pair by
+        point count.
+    radius, average_func :
+        Passed through to `correlate_around_reference_grid`.
+
+    Returns
+    -------
+    dict {(sparser_name, denser_name): result}
+        One `correlate_around_reference_grid` result per unordered pair, keyed reference-name first.
+    """
+    names = list(datasets.keys())
+    rank = {name: priority.index(name) for name in names} if priority is not None else None
+
+    results = {}
+    for name_a, name_b in combinations(names, 2):
+        if rank is not None:
+            ref_name, other_name = (name_a, name_b) if rank[name_a] < rank[name_b] else (name_b, name_a)
+        else:
+            ref_name, other_name = (name_a, name_b) if len(datasets[name_a][0]) <= len(datasets[name_b][0]) \
+                else (name_b, name_a)
+
+        ref_grid, ref_data = datasets[ref_name]
+        other_grid, other_data = datasets[other_name]
+        results[(ref_name, other_name)] = correlate_around_reference_grid(
+            ref_data, ref_grid, other_data, other_grid, contour, radius=radius, average_func=average_func,
+            name_a=ref_name, name_b=other_name)
+
+    return results

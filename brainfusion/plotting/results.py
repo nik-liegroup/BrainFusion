@@ -8,15 +8,15 @@ from brainfusion.plotting.maps import plot_transformed_grid
 from brainfusion.plotting.image_export import plot_map_on_image
 
 
-def plot_brainfusion_results(analysis, results_folder, key_quant, image_dataset=False, cbar_label='', cmap='afmhot',
-                             marker_size=20, mask=True, vmin=None, vmax=None, plot_background=False,
-                             invert_y=False, **kwargs):
+def plot_sample_warps(analysis, results_folder, key_quant, image_dataset=False, cbar_label='', cmap='afmhot',
+                      marker_size=20, mask=True, vmin=None, vmax=None, plot_background=False,
+                      invert_y=False, **kwargs):
     """
     Render each sample's DTW/warp diagnostic (its data before and after warping onto the template) for one
     `brain_fusion` result - the per-sample counterpart to `plot_verification_grids`.
 
     Averaged-map and matched-contour plots are not part of this anymore (grouping means there can be
-    several averaged maps, not just one) - use `plot_group_average_map`/`plot_contours` directly instead.
+    several averaged maps, not just one) - use `plot_average_map`/`plot_contours` directly instead.
 
     `image_dataset=True` treats each sample's data as an image (reshaping flat arrays back to (H, W) using
     the stored grid shapes) rather than a scatter of points - only correct for samples actually loaded as

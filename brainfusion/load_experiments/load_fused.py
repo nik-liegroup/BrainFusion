@@ -7,6 +7,7 @@ import os
 
 from brainfusion.io import import_analysis
 from brainfusion.sample import Sample
+from brainfusion.fusion.grouping import group_average_on_shared_grid
 
 
 def load_fused_analysis(h5_path, key_quant, group_field=None, value_key=None, metadata=None):
@@ -42,8 +43,6 @@ def load_fused_analysis(h5_path, key_quant, group_field=None, value_key=None, me
     -------
     list of Sample
     """
-    from brainfusion.correlation import group_average_on_shared_grid
-
     value_key = value_key or key_quant
     analysis, _ = import_analysis(h5_path)
     stem = os.path.splitext(os.path.basename(h5_path))[0]

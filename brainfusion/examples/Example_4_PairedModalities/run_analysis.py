@@ -7,7 +7,7 @@ none of the group_field/pairwise-correlate helpers from Example_2/3 are needed h
 
 import os
 
-from brainfusion import load_batchforce_all, load_brillouin_all, run_fusion, plot_brainfusion_results, \
+from brainfusion import load_batchforce_all, load_brillouin_all, run_fusion, plot_sample_warps, \
     correlate_on_shared_grid
 
 here = os.path.dirname(__file__)
@@ -35,7 +35,7 @@ for animal in sorted(afm_by_animal.keys() & brillouin_by_animal.keys()):
     pair_results = os.path.join(results_folder, f"animal_{animal}")
     analysis = run_fusion([afm_by_animal[animal], brillouin_by_animal[animal]], FUSION_KWARGS,
                           results_path=os.path.join(pair_results, "analysis.h5"))
-    plot_brainfusion_results(analysis, pair_results, key_quant=afm_key, cmap="hot", cbar_label=afm_key)
+    plot_sample_warps(analysis, pair_results, key_quant=afm_key, cmap="hot", cbar_label=afm_key)
 
     grid = analysis["measurement_interpolated_grid"]
     contour = analysis["template_contours"][0]
