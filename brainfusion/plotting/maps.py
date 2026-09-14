@@ -123,10 +123,13 @@ def plot_transformed_grid(contour, template_contour, data, grid, trafo_grid, key
     return fig
 
 
-def plot_average_map(data_avg, grid_avg, template_contour, cbar_label='', cmap='viridis', marker_size=15, vmin=None,
-                     vmax=None, mask=True, invert_y=False, output_path=None):
+def plot_average_map_arrays(data_avg, grid_avg, template_contour, cbar_label='', cmap='viridis', marker_size=15,
+                            vmin=None, vmax=None, mask=True, invert_y=False, output_path=None):
     """
-    Plot one fused/averaged data map over the template contour.
+    Plot one fused/averaged data map over the template contour, from plain arrays - e.g. a derived map you
+    computed yourself (a difference map, a percentile mask, ...) that has no corresponding `analysis` dict
+    to pull it back out of. For plotting straight from a `run_fusion`/`brain_fusion` result instead, use
+    `plot_average_map`, which wraps this.
 
     If `output_path` is given, saves the figure there (dpi=300, tight bbox) and closes it - the figure is
     still returned, but by then it's already closed, so treat that as "saved, not for further use".
@@ -163,27 +166,30 @@ def plot_average_map(data_avg, grid_avg, template_contour, cbar_label='', cmap='
     return fig
 
 
-def plot_group_average_map(analysis, key_quant, group_field=None, group=None, cbar_label='', cmap='viridis',
-                           marker_size=15, vmin=None, vmax=None, mask=True, invert_y=False, output_path=None):
+def plot_average_map(analysis, key_quant, group=None, cbar_label='', cmap='viridis', marker_size=15, vmin=None,
+                     vmax=None, mask=True, invert_y=False, output_path=None):
     """
     Plot one averaged map straight from a `run_fusion`/`brain_fusion` result - a thin wrapper around
-    `plot_average_map` that pulls the right grid/contour/data out of `analysis` first, so you don't need to
-    keep those arrays around separately (works equally well on an `analysis` re-loaded from its .h5 file).
+    `plot_average_map_arrays` that pulls the right grid/contour/data out of `analysis` first, so you don't
+    need to keep those arrays around separately (works equally well on an `analysis` re-loaded from its .h5
+    file). For plotting a derived array you computed yourself (no `analysis` to pull it from), use
+    `plot_average_map_arrays` directly instead.
 
-    Without `group_field`/`group`, plots the overall average across every sample. With both given, plots
-    just that one group's average (e.g. `group_field='condition', group='Control'`) - use `list_groups`
-    to see what groups an analysis has.
+    Without `group`, plots the overall average across every sample. With `group` given (e.g.
+    `group='Control'`), plots just that one group's average, read straight from
+    `analysis['group_datasets']` - `analysis` must have been fused with `run_fusion(...,
+    group_field=...)`. Use `extract_groups(analysis)` to see what groups exist.
     """
-    from brainfusion.correlation import group_average_on_shared_grid
-
     template_contour = analysis['template_contours'][0]
-    if group_field is None:
-        grid = analysis['measurement_interpolated_grid']
+    grid = analysis['measurement_interpolated_grid']
+    if group is None:
         data = analysis['measurement_interpolated_dataset'][key_quant]
     else:
-        grid, template_contour, group_maps = group_average_on_shared_grid(analysis, group_field, groups=[group])
-        data = group_maps[group][key_quant]
+        if 'group_datasets' not in analysis:
+            raise ValueError("A 'group' was given but this analysis wasn't fused with a group_field - see "
+                             "run_fusion(..., group_field=...).")
+        data = analysis['group_datasets'][group][key_quant]
 
-    return plot_average_map(data, grid, template_contour, cbar_label=cbar_label, cmap=cmap,
-                            marker_size=marker_size, vmin=vmin, vmax=vmax, mask=mask, invert_y=invert_y,
-                            output_path=output_path)
+    return plot_average_map_arrays(data, grid, template_contour, cbar_label=cbar_label, cmap=cmap,
+                                   marker_size=marker_size, vmin=vmin, vmax=vmax, mask=mask, invert_y=invert_y,
+                                   output_path=output_path)

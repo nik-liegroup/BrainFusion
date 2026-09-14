@@ -6,7 +6,7 @@ Put batchforce experiment folders under ./data (see `load_batchforce_all`), then
 
 import os
 
-from brainfusion import load_batchforce_all, run_fusion, plot_brainfusion_results, plot_group_average_map
+from brainfusion import load_batchforce_all, run_fusion, plot_sample_warps, plot_average_map
 
 here = os.path.dirname(__file__)
 data_folder = os.path.join(here, "data")
@@ -29,9 +29,9 @@ samples = load_batchforce_all(data_folder, **LOADER_KWARGS)
 analysis = run_fusion(samples, FUSION_KWARGS, results_path=os.path.join(results_folder, "analysis.h5"))
 
 # Per-sample diagnostics: each animal's data before/after warping onto the shared template
-plot_brainfusion_results(analysis, results_folder, key_quant=key_quant, cmap="hot", vmin=0, vmax=500,
+plot_sample_warps(analysis, results_folder, key_quant=key_quant, cmap="hot", vmin=0, vmax=500,
                          cbar_label="Reduced elastic modulus (Pa)")
 
 # The one averaged map across every sample
-plot_group_average_map(analysis, key_quant, cbar_label="Reduced elastic modulus (Pa)", cmap="hot", vmin=0,
-                       vmax=500, output_path=os.path.join(results_folder, "Averaged_Map.png"))
+plot_average_map(analysis, key_quant, cbar_label="Reduced elastic modulus (Pa)", cmap="hot", vmin=0, vmax=500,
+                 output_path=os.path.join(results_folder, "Averaged_Map.png"))

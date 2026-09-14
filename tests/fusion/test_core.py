@@ -3,7 +3,7 @@ import os
 import pytest
 import numpy as np
 
-from brainfusion.sample import Sample
+from brainfusion.sample import Sample, replace
 from brainfusion.fusion.core import fuse_boundaries, fuse_grids, fuse_measurement_datasets, brain_fusion, run_fusion
 
 
@@ -133,6 +133,25 @@ class TestBrainFusion:
         result = brain_fusion(samples, contour_template="average", outline_averaging="star_domain",
                               contour_interp_n=40)
         assert "measurement_interpolated_dataset" in result
+
+    def test_group_field_caches_group_datasets(self):
+        samples = [
+            replace(circle_sample(0, 0, 1, value=1.0, filename="a1"), metadata={"condition": "A"}),
+            replace(circle_sample(0.05, 0, 1.02, value=1.0, filename="a2"), metadata={"condition": "A"}),
+            replace(circle_sample(-0.03, 0.02, 0.98, value=2.0, filename="b1"), metadata={"condition": "B"}),
+        ]
+        result = brain_fusion(samples, contour_template="average", contour_interp_n=40, clustering="Mean",
+                              group_field="condition")
+        assert result["group_field"] == "condition"
+        assert set(result["group_datasets"].keys()) == {"A", "B"}
+        np.testing.assert_allclose(result["group_datasets"]["A"]["value"], 1.0)
+        np.testing.assert_allclose(result["group_datasets"]["B"]["value"], 2.0)
+
+    def test_no_group_field_omits_group_keys(self):
+        samples = [circle_sample(0, 0, 1, filename="a"), circle_sample(0.2, 0, 1.1, filename="b")]
+        result = brain_fusion(samples, contour_interp_n=40)
+        assert "group_field" not in result
+        assert "group_datasets" not in result
 
 
 class TestRunFusion:

@@ -1,9 +1,7 @@
 import numpy as np
-from scipy.interpolate import Rbf
 from scipy.interpolate import RBFInterpolator
 from tqdm import tqdm
 from scipy.spatial import cKDTree, distance_matrix
-import numbers
 from typing import Union, Callable, Tuple, List
 
 
@@ -170,63 +168,6 @@ def create_rbf_interpolators(original_contour: np.ndarray, deformed_contour: np.
     return rbf_x, rbf_y
 
 
-def create_rbf_interpolators_legacy(original_contour: np.ndarray, deformed_contour: np.ndarray,
-                                    function: str = 'linear',
-                                    smooth: Union[float, str] = 'auto') -> Tuple[Callable, Callable]:
-    """
-   Create RBF interpolators to map coordinates from original to deformed contour.
-
-   Parameters
-   ----------
-   original_contour : np.ndarray of shape (N, 2)
-       Points on the original contour (X, Y).
-   deformed_contour : np.ndarray of shape (N, 2)
-       Corresponding points on the deformed contour (X', Y').
-   function : str
-       Type of RBF function (e.g. 'linear', 'multiquadric', 'gaussian').
-   smooth : float or 'auto'
-       Smoothing parameter. If 'auto', a default based on average spacing is used.
-
-   Returns
-   -------
-   rbf_x : Callable
-       Interpolator for x-coordinates.
-   rbf_y : Callable
-       Interpolator for y-coordinates.
-   """
-    # ToDo: Implement new interpolation function scipy.interpolate.RBFInterpolator
-    # ToDo: Implement smooth bijective transformation to quickly invert for faster interpolation to regular grid
-    if not (isinstance(original_contour, np.ndarray) and isinstance(deformed_contour, np.ndarray)):
-        raise TypeError("Contours must be numpy arrays.")
-
-    if original_contour.shape != deformed_contour.shape or original_contour.shape[1] != 2:
-        raise ValueError("Contours must be of shape (N, 2) and match in size.")
-
-    if not isinstance(function, str):
-        raise TypeError("`function` must be a string.")
-
-    valid_functions = {'multiquadric', 'inverse', 'gaussian', 'linear', 'cubic', 'quintic', 'thin_plate'}
-    if function not in valid_functions:
-        raise ValueError(f"`function` must be one of: {valid_functions}. Got '{function}'.")
-
-    if smooth == "auto":
-        D = distance_matrix(original_contour, original_contour)
-        np.fill_diagonal(D, np.inf)
-        typical_spacing = np.min(D, axis=1).mean()
-        smooth = 0.1 * typical_spacing
-    elif isinstance(smooth, numbers.Number) is False:
-        raise TypeError('`smooth` must be a number or "auto".')
-
-    x_orig, y_orig = original_contour[:, 0], original_contour[:, 1]
-    x_deform, y_deform = deformed_contour[:, 0], deformed_contour[:, 1]
-
-    # Define forward mapping from definition space to deformation space
-    rbf_x = Rbf(x_orig, y_orig, x_deform, function=function, smooth=smooth)
-    rbf_y = Rbf(x_orig, y_orig, y_deform, function=function, smooth=smooth)
-
-    return rbf_x, rbf_y
-
-
 def extend_grid(measurement_grids: List[np.ndarray], x_extend: float, y_extend: float) -> Tuple[np.ndarray, List[int]]:
     """
     Generate an extended regular grid that encompasses all provided measurement grids.
@@ -264,16 +205,14 @@ def extend_grid(measurement_grids: List[np.ndarray], x_extend: float, y_extend: 
     if not all(isinstance(grid, np.ndarray) and grid.ndim == 2 and grid.shape[1] == 2 for grid in measurement_grids):
         raise ValueError("Each grid must be a 2D NumPy array of shape (N, 2).")
 
-    # Find global min/max across all grids
     all_points = np.vstack(measurement_grids)
     x_min, y_min = np.min(all_points, axis=0)
     x_max, y_max = np.max(all_points, axis=0)
 
-    # Compute spacing separately for each grid
     x_spacings = []
     y_spacings = []
 
-    # Compute the median of unique absolute x and y distances to the 4 nearest neighbours for a set of 2D coordinates
+    # Local spacing per grid: median x/y distance to each point's 4 nearest neighbours
     for grid in measurement_grids:
         n_points = len(grid)
         k_query = min(5, n_points)
@@ -301,19 +240,15 @@ def extend_grid(measurement_grids: List[np.ndarray], x_extend: float, y_extend: 
         x_spacings.append(median_dx)
         y_spacings.append(median_dy)
 
-    # Take the median across all grids to determine global spacing
     x_median_spacing = np.median(x_spacings)
     y_median_spacing = np.median(y_spacings)
 
-    # Compute extension factor
     x_extend_factor = x_extend * (x_max - x_min)
     y_extend_factor = y_extend * (y_max - y_min)
 
-    # Generate extended coordinate range
     x_new = np.arange(x_min - x_extend_factor, x_max + x_extend_factor + x_median_spacing, x_median_spacing)
     y_new = np.arange(y_min - y_extend_factor, y_max + y_extend_factor + y_median_spacing, y_median_spacing)
 
-    # Create the extended meshgrid
     x, y = np.meshgrid(x_new, y_new)
     extended_grid_regular = np.stack([x, y], axis=-1)
     extended_grid_stack = np.vstack([extended_grid_regular[:, :, 0].ravel(), extended_grid_regular[:, :, 1].ravel()]).T

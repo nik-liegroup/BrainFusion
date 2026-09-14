@@ -7,9 +7,10 @@ import os
 
 from brainfusion.io import import_analysis
 from brainfusion.sample import Sample
+from brainfusion.fusion.grouping import group_average_on_shared_grid
 
 
-def load_fused_analysis(h5_path, key_quant, group_field=None, value_key=None, metadata=None):
+def load_fused_analysis(h5_path, key_quant, group_field=None, rename_key=None, metadata=None):
     """
     Load one fused analysis .h5 back in as a list of `Sample`s.
 
@@ -28,10 +29,10 @@ def load_fused_analysis(h5_path, key_quant, group_field=None, value_key=None, me
     group_field : str, optional
         Metadata key the ORIGINAL analysis's samples were grouped by, e.g. 'condition'. Requires that
         analysis to have been fused with `clustering='Mean'/'Median'/'Sum'` (not 'GMM').
-    value_key : str, optional
+    rename_key : str, optional
         Dataset key to store the loaded values under on the returned Sample(s). Defaults to `key_quant`.
         Set this when combining two modalities whose quantities are named differently (e.g. AFM's
-        'modulus' vs Brillouin's 'brillouin_shift') - give both loads the same `value_key` (e.g. 'value')
+        'modulus' vs Brillouin's 'brillouin_shift') - give both loads the same `rename_key` (e.g. 'value')
         so the re-fused analysis has one common dataset key to group/correlate on instead of two.
     metadata : dict, optional
         Extra metadata to attach to every returned Sample, e.g. {'modality': 'AFM'}. Merged with (and
@@ -42,9 +43,7 @@ def load_fused_analysis(h5_path, key_quant, group_field=None, value_key=None, me
     -------
     list of Sample
     """
-    from brainfusion.correlation import group_average_on_shared_grid
-
-    value_key = value_key or key_quant
+    rename_key = rename_key or key_quant
     analysis, _ = import_analysis(h5_path)
     stem = os.path.splitext(os.path.basename(h5_path))[0]
 
@@ -52,12 +51,12 @@ def load_fused_analysis(h5_path, key_quant, group_field=None, value_key=None, me
         grid = analysis['measurement_interpolated_grid']
         contour = analysis['template_contours'][0]
         data = analysis['measurement_interpolated_dataset'][key_quant]
-        return [Sample(contour=contour, grid=grid, dataset={value_key: data}, filename=stem,
+        return [Sample(contour=contour, grid=grid, dataset={rename_key: data}, filename=stem,
                       metadata=dict(metadata or {}))]
 
     grid, contour, group_maps = group_average_on_shared_grid(analysis, group_field)
     return [
-        Sample(contour=contour, grid=grid, dataset={value_key: data_by_key[key_quant]},
+        Sample(contour=contour, grid=grid, dataset={rename_key: data_by_key[key_quant]},
               filename=f"{stem}_{group}", metadata={group_field: group, **(metadata or {})})
         for group, data_by_key in group_maps.items()
     ]

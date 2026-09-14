@@ -36,11 +36,10 @@ def check_parameters(params_defined, params_loaded):
                 'loaded': None
             }
 
-    # Report differences
     if differences:
-        print("Differences found between loaded parameters and defined parameters:")
+        print("Differences found between the cached analysis's parameters and the ones just requested:")
         for key, diff in differences.items():
-            print(f"{key}: Old = {diff['loaded']}, Loaded = {diff['defined']}")
+            print(f"{key}: cached = {diff['loaded']}, requested = {diff['defined']}")
 
 
 def export_analysis(path, analysis, params):
@@ -244,33 +243,22 @@ def read_parquet_file(path, image=False, x_var='x_image', y_var='y_image', data_
         return grid, data
 
 
-def append_parquet_file(base_path, brainfusion_analysis, salini=False):
+def append_parquet_file(base_path, brainfusion_analysis):
     """
-    Write brainfusion analysis file to parquet file.
+    Write each sample's warped grid back into its original Saliani-atlas parquet file (matching
+    `load_experiments.other.load_salini_afm`'s naming convention), as new '..._Trafo.parquet' files.
     """
-    if salini is True:
-        for idx, _ in enumerate(brainfusion_analysis['template_contours']):
-            folder_name = brainfusion_analysis['measurement_filenames'][idx]
-            parquet_name = re.sub(r"_(left|right)$", r"_afm_measurements_fortranslation_\1", folder_name)
-            parquet_path = os.path.join(base_path, folder_name, f"{parquet_name}.parquet")
+    for idx, _ in enumerate(brainfusion_analysis['template_contours']):
+        folder_name = brainfusion_analysis['measurement_filenames'][idx]
+        parquet_name = re.sub(r"_(left|right)$", r"_afm_measurements_fortranslation_\1", folder_name)
+        parquet_path = os.path.join(base_path, folder_name, f"{parquet_name}.parquet")
 
-            # Read
-            df = pd.read_parquet(parquet_path, engine='pyarrow')
-            trafo_grid = brainfusion_analysis['measurement_trafo_grids'][idx]
+        df = pd.read_parquet(parquet_path, engine='pyarrow')
+        trafo_grid = brainfusion_analysis['measurement_trafo_grids'][idx]
 
-            # Write
-            df['x_image_translated'], df['y_image_translated'] = trafo_grid[:, 0], trafo_grid[:, 1]
-            df.to_parquet(parquet_path.removesuffix(".parquet") + '_Trafo' + '.parquet', index=False,
-                          engine='pyarrow')
-
-    else:
-        parquet_file_names = [filename + '_Merged_RAW_ch02_image_roi_linearised.parquet'
-                              for filename in brainfusion_analysis['measurement_filenames']]
-        for idx, file_name in enumerate(parquet_file_names):
-            pass
-            #parquet_file_path = os.path.join(path, file_name)
-            #df['x_translated'], df['y_translated'] = trafo_grid[:, 0], trafo_grid[:, 1]
-            #df.to_parquet(parquet_file_path.removesuffix(".parquet") + '_Trafo' + '.parquet', index=False, engine='pyarrow')
+        df['x_image_translated'], df['y_image_translated'] = trafo_grid[:, 0], trafo_grid[:, 1]
+        df.to_parquet(parquet_path.removesuffix(".parquet") + '_Trafo' + '.parquet', index=False,
+                      engine='pyarrow')
 
 
 def parse_name(name: str, pattern: str, converters: dict = None) -> dict:

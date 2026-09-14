@@ -33,10 +33,8 @@ def find_average_contour(contours_list: List[np.ndarray], average: str = 'star_d
     if not all(isinstance(c, np.ndarray) and c.ndim == 2 and c.shape[1] == 2 for c in contours_list):
         raise ValueError("Each contour must be a (N, 2) np.ndarray")
 
-    # Calculate the average contour
     avg_contour = calculate_average_contour(contours_list, average=average, star_bins=star_bins)
 
-    # Calculate error
     errors = calculate_error_distances(contours_list, avg_contour, metric=error_metric)
 
     return avg_contour, errors
@@ -75,18 +73,16 @@ def calculate_average_contour(contours: List[np.ndarray], average: str = 'star_d
         raise ValueError("Each contour must be a (N, 2) np.ndarray")
 
     if average == 'star_domain':
-        # Check if all contours are star domains with respect to the given centre
         assert all(is_star_domain(contour, [0, 0]) for contour in contours), ('Not all contours define star '
                                                                               'domains with respect to their geometric '
                                                                               'centre!')
 
-        # Convert contours to polar coordinates
         angles = []
         radii = []
         init_angles = []
         for contour in contours:
             x, y = contour[:, 0], contour[:, 1]
-            theta = np.arctan2(y, x)  # Compute angles
+            theta = np.arctan2(y, x)
             r = np.sqrt(x ** 2 + y ** 2)
             angles.append(theta)
             radii.append(r)
@@ -95,25 +91,20 @@ def calculate_average_contour(contours: List[np.ndarray], average: str = 'star_d
         # Compute the mean starting angle using circular statistics
         mean_angle = np.angle(np.mean(np.exp(1j * np.array(init_angles))))
 
-        # Create a uniform grid of angles starting at the mean angle
         angle_bins = np.linspace(mean_angle, mean_angle + 2 * np.pi, star_bins, endpoint=False)
 
-        # Interpolate radii for each contour onto the uniform grid
         interpolated_radii = np.array([
             np.interp(angle_bins, np.sort(theta), r[np.argsort(theta)], period=2 * np.pi)
             for theta, r in zip(angles, radii)
         ])
 
-        # Compute the mean radius at each angle bin
         avg_radii = np.mean(interpolated_radii, axis=0)
 
-        # Convert mean polar coordinates back to Cartesian
         avg_x = avg_radii * np.cos(angle_bins)
         avg_y = avg_radii * np.sin(angle_bins)
         avg_contour = np.column_stack((avg_x, avg_y))
 
     elif average == 'median':
-        # Require same number of points
         n_points = [c.shape[0] for c in contours]
         if len(set(n_points)) != 1:
             raise ValueError("For 'median' averaging, all contours must have the same number of points.")
@@ -130,9 +121,8 @@ def calculate_average_contour(contours: List[np.ndarray], average: str = 'star_d
 
     # Topologically orient contour
     if get_contour_orientation(contours[0]) != get_contour_orientation(avg_contour):
-        avg_contour = avg_contour[::-1]  # Reverse the order
+        avg_contour = avg_contour[::-1]
 
-    # Close contour
     avg_contour[-1, :] = avg_contour[0, :]
     return avg_contour
 
@@ -162,11 +152,10 @@ def is_star_domain(contour: np.ndarray, centre: tuple[float, float], tol_factor:
     polygon = Polygon(contour)
     center_point = Point(centre)
 
-    # Check centre inside polygon
     if not polygon.contains(center_point):
         return False
 
-    # Calculate contour bounding box diagonal length for tolerance scaling
+    # Tolerance is scaled to the contour's bounding box diagonal, not a fixed distance
     minx, miny, maxx, maxy = polygon.bounds
     diag_len = np.sqrt((maxx - minx) ** 2 + (maxy - miny) ** 2)
     atol = tol_factor * diag_len
@@ -178,7 +167,6 @@ def is_star_domain(contour: np.ndarray, centre: tuple[float, float], tol_factor:
 
         intersection = polygon.boundary.intersection(line_of_sight)
 
-        # Convert intersection to list
         if isinstance(intersection, Point):
             intersections = [intersection]
         elif hasattr(intersection, "geoms"):
@@ -249,24 +237,20 @@ def jaccard_distance(curve_a: np.ndarray, curve_b: np.ndarray) -> float:
         if not np.allclose(curve[0], curve[-1]):
             raise ValueError(f"{name} must be closed (first point must equal last point)")
 
-    # Create Polygon objects
     poly_a = Polygon(curve_a)
     poly_b = Polygon(curve_b)
 
     if not poly_a.is_valid or not poly_b.is_valid:
         raise ValueError("One of the input curves does not form a valid polygon")
 
-    # Calculate the intersection and union of the polygons
     intersection_area = poly_a.intersection(poly_b).area
     union_area = poly_a.union(poly_b).area
 
     if union_area == 0:
         raise ValueError(f"{union_area} must not be 0")
 
-    # Calculate the Jaccard Index based on areas
     jaccard_index = intersection_area / union_area
 
-    # Calculate the Jaccard Distance
     jaccard_dist = 1 - jaccard_index
     return jaccard_dist
 
