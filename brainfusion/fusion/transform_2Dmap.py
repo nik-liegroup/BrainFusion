@@ -236,6 +236,12 @@ def extend_grid(measurement_grids: List[np.ndarray], x_extend: float, y_extend: 
 
         median_dx = np.median(dx_list)
         median_dy = np.median(dy_list)
+        # A grid that is axis-aligned (e.g. all grids rotated onto the template of an aligned set) has as many
+        # zero x distances (vertical neighbours) as spacings; a zero median would make a step of 0 below.
+        if median_dx <= 0 and any(d > 0 for d in dx_list):
+            median_dx = np.median([d for d in dx_list if d > 0])
+        if median_dy <= 0 and any(d > 0 for d in dy_list):
+            median_dy = np.median([d for d in dy_list if d > 0])
 
         x_spacings.append(median_dx)
         y_spacings.append(median_dy)

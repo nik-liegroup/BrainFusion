@@ -228,6 +228,62 @@ def get_roi_from_txt(roi_path, delimiter='\t', skip=0):
         return None
 
 
+ANNOTATION_FILENAME = 'outline_brainfusion.txt'  # what the roi-annotator calls its file
+
+
+def read_annotation_file(path):
+    """
+    Read an outline file written by the roi-annotator: '#'-prefixed header lines ('# image: ...', '# transform:
+    ...', '# mirror_horizontal: 1', ...) followed by '[outline]' and '[landmarks]' sections of tab-separated
+    'x<TAB>y' pixel coordinates (0-based, integer = pixel centre, in the un-mirrored image named in the header).
+
+    Returns None if `path` does not exist or has no '[outline]' / '[landmarks]' section; otherwise
+    {'header': dict of str, 'outline': (N, 2) array or None, 'landmarks': (K, 2) array or None}.
+    """
+    if not os.path.exists(path):
+        return None
+    header, points, section = {}, {'outline': [], 'landmarks': []}, None
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            if line.startswith('#'):
+                key, _, value = line[1:].partition(':')
+                header[key.strip()] = value.strip()
+            elif line in ('[outline]', '[landmarks]'):
+                section = line[1:-1]
+            elif section is not None:
+                points[section].append([float(v) for v in line.split()])
+    if section is None:
+        return None
+    return {'header': header,
+            'outline': np.array(points['outline']) if points['outline'] else None,
+            'landmarks': np.array(points['landmarks']) if points['landmarks'] else None}
+
+
+def mirror_pixels(points_xy, shape_hw, horizontal=False, vertical=False):
+    """
+    Mirror (x, y) pixel coordinates (0-based, first pixel centre = 0) within an image of shape (height, width):
+    left-right if `horizontal`, top-bottom if `vertical`. Applying it twice gives back the input. Everything
+    mirrored together (grid, outline, landmarks) keeps its relative position whichever mirror axis is used; the
+    axis only matters for where the mirrored set lies on the image.
+    """
+    height, width = shape_hw
+    points = np.array(points_xy, dtype=float)
+    if horizontal:
+        points[:, 0] = (width - 1) - points[:, 0]
+    if vertical:
+        points[:, 1] = (height - 1) - points[:, 1]
+    return points
+
+
+def annotation_mirror_flags(annotation):
+    """(horizontal, vertical) display-mirror flags stored in an annotation's header."""
+    header = annotation['header']
+    return header.get('mirror_horizontal') == '1', header.get('mirror_vertical') == '1'
+
+
 def read_parquet_file(path, image=False, x_var='x_image', y_var='y_image', data_var='value_background_corrected'):
     """
     Reads in parquet files either as images in matrix format or as a Nx2 list of coordinates with the respective N values.

@@ -17,12 +17,11 @@ afm_key, brillouin_key = "modulus", "brillouin_shift_f_proj"
 afm_samples = load_batchforce_all(
     os.path.join(here, "data", "AFM"),
     afm_variables={afm_key: "Reduced apparent elastic modulus"}, batchforce_filename="data.csv",
-    grid_conv_filename="GridInversionMatrix.csv", boundary_filename="outline",
+    grid_conv_filename="GridInversionMatrix.csv",
     name_pattern=r"#(?P<animal_number>\d+)_.*", name_converters={"animal_number": int})
 
 brillouin_samples = load_brillouin_all(
     os.path.join(here, "data", "Brillouin"), brillouin_variables=[brillouin_key],
-    boundary_filename="brain_outline",
     name_pattern=r"#(?P<animal_number>\d+)_.*", name_converters={"animal_number": int})
 
 afm_by_animal = {s.metadata["animal_number"]: s for s in afm_samples}

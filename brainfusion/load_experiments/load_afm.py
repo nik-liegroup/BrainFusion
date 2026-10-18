@@ -3,29 +3,33 @@ import os
 import numpy as np
 import pandas as pd
 from PIL import Image
-from skimage.transform import AffineTransform, estimate_transform
+from skimage.transform import AffineTransform
 
-from brainfusion.io import get_roi_from_txt, attach_metadata, parse_name
+from brainfusion.io import (attach_metadata, parse_name, read_annotation_file, mirror_pixels, annotation_mirror_flags,
+                            ANNOTATION_FILENAME)
 from brainfusion.load_experiments.base import iter_experiment_folders
 from brainfusion.sample import Sample
 
+# The roi-annotator's file sits next to the image it was drawn on
+AFM_ANNOTATION_DIR = os.path.join('Pics', 'calibration')
 
-def load_batchforce_all(base_path, afm_variables, batchforce_filename, grid_conv_filename, boundary_filename,
-                        landmarks_filename=None, name_pattern=None, name_converters=None,
-                        **kwargs) -> list[Sample]:
+
+def load_batchforce_all(base_path, afm_variables, batchforce_filename='data.csv',
+                        grid_conv_filename='GridInversionMatrix.csv', use_landmarks=True, apply_mirror=True,
+                        name_pattern=None, name_converters=None) -> list[Sample]:
     """
     Load every batchforce AFM experiment folder (name containing '#') found directly below `base_path`.
 
-    See `load_batchforce_single` for what `landmarks_filename` does. If `name_pattern` is given, it is
-    matched against each folder's name (see `brainfusion.io.parse_name`) and the extracted fields are
-    stored in the sample's `.metadata`, e.g. animal number, condition, stage.
+    See `load_batchforce_single` for the other parameters. If `name_pattern` is given, it is matched against
+    each folder's name (see `brainfusion.io.parse_name`) and the extracted fields are stored in the sample's
+    `.metadata`, e.g. animal number, condition, stage.
     """
     samples = []
     for folder_name, folder_path in iter_experiment_folders(base_path):
         sample = load_batchforce_single(folder_path, afm_variables=afm_variables,
                                         batchforce_filename=batchforce_filename,
-                                        grid_conv_filename=grid_conv_filename, boundary_filename=boundary_filename,
-                                        landmarks_filename=landmarks_filename)
+                                        grid_conv_filename=grid_conv_filename, use_landmarks=use_landmarks,
+                                        apply_mirror=apply_mirror)
         if name_pattern is not None:
             sample = attach_metadata(sample, parse_name(folder_name, name_pattern, name_converters))
         samples.append(sample)
@@ -33,10 +37,11 @@ def load_batchforce_all(base_path, afm_variables, batchforce_filename, grid_conv
 
 
 def load_batchforce_single(folder_path, afm_variables, batchforce_filename='data.csv',
-                           grid_conv_filename='GridInversionMatrix.csv', boundary_filename='brain_outline',
-                           landmarks_filename=None, **kwargs) -> Sample:
+                           grid_conv_filename='GridInversionMatrix.csv', use_landmarks=True, apply_mirror=True,
+                           annotation_file=None) -> Sample:
     """
-    Load a single AFM experiment analysed with the Matlab 'batchforce' library, together with its outline.
+    Load a single AFM experiment analysed with the Matlab 'batchforce' library, together with the outline (and
+    landmarks) annotated with the roi-annotator.
 
     `afm_variables` is normally a list of column names to read directly out of `batchforce_filename` (one
     column per quantity). Some batchforce versions instead export a long/tidy table with one row per
@@ -45,54 +50,45 @@ def load_batchforce_single(folder_path, afm_variables, batchforce_filename='data
     point. For that format, pass `afm_variables` as a dict mapping the desired `Sample.dataset` key to the
     quantity's `result_parameter` label instead, e.g. `{'modulus': 'Reduced apparent elastic modulus'}`.
 
-    If `landmarks_filename` is given, looks for '<landmarks_filename>.txt' next to the outline and stores its
-    points as `Sample.landmarks`.
+    The annotation is 'Pics/calibration/outline_brainfusion.txt' of the experiment, or `annotation_file` if
+    given (e.g. the file of another run on the same sample with an identical 'overview.tif'); see
+    `brainfusion.io.read_annotation_file`. It must have been drawn on 'overview.tif', the image the data's
+    'x_image'/'y_image' refer to. Its (0-based) pixels are converted to the data's Matlab (1-based) pixels.
+    With `apply_mirror`, the mirroring noted in its header (so that all brains look the same way) is applied
+    to grid, outline, landmarks and background image. `use_landmarks=False` ignores the landmarks.
     """
     folder_name = os.path.basename(os.path.normpath(folder_path))
     variable_map = afm_variables if isinstance(afm_variables, dict) else {name: name for name in afm_variables}
 
-    # Load the AFM analysis file
+    # --- AFM data (needs 'data.csv' from AFM_BatchMapping.m) ---
     data_path = os.path.join(folder_path, 'region analysis', batchforce_filename)
     assert os.path.exists(data_path), f'The given path does not point to an AFM analysis file: {data_path}'
+    assert data_path.endswith('.csv'), "AFM analysis data must be a .csv file (writetable(data, 'data.csv') in Matlab)"
 
-    data_extension = os.path.splitext(batchforce_filename)[1]
-    if data_extension == '.mat':
-        raise ValueError(f"Importing {data_extension} files is not implemented yet, use "
-                         f"writetable(data, 'data.csv') in Matlab")
-    elif data_extension == '.csv':
-        data = pd.read_csv(data_path)
-        if 'result_parameter' in data.columns and 'result' in data.columns:
-            wide = data.pivot_table(index=['x_image', 'y_image'], columns='result_parameter', values='result',
-                                    aggfunc='first').reset_index()
-            if 'x' in data.columns and 'y' in data.columns:
-                stage_xy = data.drop_duplicates(subset=['x_image', 'y_image'])[['x_image', 'y_image', 'x', 'y']]
-                wide = wide.merge(stage_xy, on=['x_image', 'y_image'], how='left')
-            data = wide
-        afm_data = {key: np.array(data[label]) for key, label in variable_map.items()}
-    else:
-        raise ValueError(f"{data_extension} files containing AFM analysis data are not supported!")
+    data = pd.read_csv(data_path)
+    if 'result_parameter' in data.columns and 'result' in data.columns:
+        wide = data.pivot_table(index=['x_image', 'y_image'], columns='result_parameter', values='result',
+                                aggfunc='first').reset_index()
+        if 'x' in data.columns and 'y' in data.columns:
+            stage_xy = data.drop_duplicates(subset=['x_image', 'y_image'])[['x_image', 'y_image', 'x', 'y']]
+            wide = wide.merge(stage_xy, on=['x_image', 'y_image'], how='left')
+        data = wide
+    afm_data = {key: np.array(data[label]) for key, label in variable_map.items()}
 
-    # Extract image coordinates
-    afm_grid = np.stack((np.array(data['x_image']), np.array(data['y_image'])), axis=-1)
+    # --- Grid in image pixels, and the matrix to micrometers ---
+    # The data's pixels are Matlab's (first pixel centre = 1); the annotation is 0-based like numpy. Everything
+    # is brought to 0-based here and back to Matlab's convention only for the matrix.
+    afm_grid = np.stack((np.array(data['x_image']), np.array(data['y_image'])), axis=-1) - 1
 
-    # Load transformation matrix to scale to stage coordinates (to um)
     grid_vars_path = os.path.join(folder_path, grid_conv_filename)
     assert os.path.exists(grid_vars_path), (f'The given path does not point to a grid conversion variables file: '
                                             f'{grid_vars_path}')
-
-    grid_extension = os.path.splitext(grid_conv_filename)[1]
-    if grid_extension == '.csv':
-        afm_scale_matrix = pd.read_csv(grid_vars_path, header=None, sep=',').to_numpy()
-    else:
-        print(f"Importing {grid_extension} files is not implemented yet, use writematrix([M [r; s]; 0 0 1],"
-                         f"'GridInversionMatrix.csv') in Matlab to save the full 3x3 conversion matrix."
-             f"Estimating transformation matrix instead now.")
-        afm_grid_stage = np.stack((np.array(data['x']), np.array(data['y'])), axis=-1)
-        afm_scale_matrix = estimate_transform('affine', afm_grid_stage, afm_grid).params
+    assert grid_vars_path.endswith('.csv'), ("The grid conversion must be a .csv file: writematrix([M [r; s]; 0 0 1], "
+                                             "'GridInversionMatrix.csv') in Matlab")
+    afm_scale_matrix = pd.read_csv(grid_vars_path, header=None, sep=',').to_numpy()
 
     # Rotate stage coordinates to preserve the grid orientation in relation to the image
-    stage_image_angle = -90
-    theta = np.radians(stage_image_angle)
+    theta = np.radians(-90)
     rotation_matrix = np.array([
         [np.cos(theta), -np.sin(theta), 0],
         [np.sin(theta), np.cos(theta), 0],
@@ -100,45 +96,39 @@ def load_batchforce_single(folder_path, afm_variables, batchforce_filename='data
     ])
     afm_scale_matrix = afm_scale_matrix @ rotation_matrix
 
-    # Load background image
-    img_path = os.path.join(folder_path, 'Pics', 'calibration', 'overview.tif')
-    bg_image = np.array(Image.open(img_path).convert('L'))
+    # --- Background image ---
+    calibration_dir = os.path.join(folder_path, AFM_ANNOTATION_DIR)
+    bg_image = np.array(Image.open(os.path.join(calibration_dir, 'overview.tif')).convert('L'))
 
-    # Load contour, flipping it (and the grid/image) if it was defined on the left orientation
-    contour_dir = os.path.join(folder_path, 'Pics', 'calibration')
-    left_path = os.path.join(contour_dir, f'{boundary_filename}_oriLeft.txt')
-    right_path = os.path.join(contour_dir, f'{boundary_filename}_oriRight.txt')
+    # --- Annotation ---
+    annotation_file = annotation_file or os.path.join(calibration_dir, ANNOTATION_FILENAME)
+    annotation = read_annotation_file(annotation_file)
+    assert annotation is not None, f"No roi-annotator file with an outline at {annotation_file}"
+    assert annotation['outline'] is not None, f"No [outline] in {annotation_file}"
+    annotated_image = annotation['header'].get('image', 'overview.tif')
+    assert annotated_image == 'overview.tif', (
+        f"{annotation_file}: the outline was drawn on '{annotated_image}', but the grid (x_image/y_image) is in "
+        f"pixels of 'overview.tif' - annotate on overview.tif")
+    contour = annotation['outline']
+    landmarks = annotation['landmarks'] if use_landmarks else None
 
-    # Landmarks are just user-annotated points in a fixed order, so unlike the contour they don't need
-    # separate left/right files - the orientation detected from the boundary file is enough to know whether
-    # to flip them too.
-    landmarks = None
-    if landmarks_filename is not None:
-        landmarks_path = os.path.join(contour_dir, f'{landmarks_filename}.txt')
+    if apply_mirror:
+        horizontal, vertical = annotation_mirror_flags(annotation)
+        shape = bg_image.shape[:2]
+        afm_grid = mirror_pixels(afm_grid, shape, horizontal, vertical)
+        contour = mirror_pixels(contour, shape, horizontal, vertical)
+        if landmarks is not None:
+            landmarks = mirror_pixels(landmarks, shape, horizontal, vertical)
+        if horizontal:
+            bg_image = np.fliplr(bg_image)
+        if vertical:
+            bg_image = np.flipud(bg_image)
 
-    if os.path.exists(left_path):
-        bg_image = np.flipud(bg_image)
-        afm_grid[:, 1] = bg_image.shape[0] - afm_grid[:, 1]
-        contour = get_roi_from_txt(left_path)
-        contour[:, 1] = bg_image.shape[0] - contour[:, 1]
-        if landmarks_filename is not None:
-            landmarks = get_roi_from_txt(landmarks_path)
-            landmarks[:, 1] = bg_image.shape[0] - landmarks[:, 1]
-    elif os.path.exists(right_path):
-        contour = get_roi_from_txt(right_path)
-        if landmarks_filename is not None:
-            landmarks = get_roi_from_txt(landmarks_path)
-    else:
-        raise ValueError(f"No matching contour was found for {folder_path}!\n"
-                         f"Make sure filename is of type: '<boundary_filename>_OriRight.txt' or "
-                         f"'<boundary_filename>_OriLeft.txt'")
-
-    # Transform coordinates from image pixels to micrometers
-    aff = AffineTransform(matrix=np.linalg.inv(afm_scale_matrix))
-    afm_grid = aff(afm_grid)
-    contour = aff(contour)
+    # --- Image pixels to micrometers (matrix in Matlab pixels: +1) ---
+    to_um = AffineTransform(matrix=np.linalg.inv(afm_scale_matrix))
+    afm_grid, contour = to_um(afm_grid + 1), to_um(contour + 1)
     if landmarks is not None:
-        landmarks = aff(landmarks)
+        landmarks = to_um(landmarks + 1)
 
     return Sample(contour=contour, grid=afm_grid, dataset=afm_data, scale=afm_scale_matrix, landmarks=landmarks,
-                 filename=folder_name, bg_image=bg_image)
+                  filename=folder_name, bg_image=bg_image)

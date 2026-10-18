@@ -17,7 +17,6 @@ LOADER_KWARGS = dict(
     afm_variables={"modulus": "Reduced apparent elastic modulus"},
     batchforce_filename="data.csv",
     grid_conv_filename="GridInversionMatrix.csv",
-    boundary_filename="outline",
 )
 
 FUSION_KWARGS = dict(contour_template="average", outline_averaging="median", contour_interp_n=200,

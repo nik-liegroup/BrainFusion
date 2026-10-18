@@ -147,3 +147,21 @@ class TestExportImportAnalysisRoundTrip:
         export_analysis(path, analysis, params={})
         loaded, _ = import_analysis(path)
         assert loaded["per_sample_metadata"] == [{"stage": 1}, {"stage": 2}]
+
+
+def test_read_annotation_file_and_mirror(tmp_path):
+    from brainfusion.io import read_annotation_file, mirror_pixels, annotation_mirror_flags
+    path = tmp_path / "outline.txt"
+    path.write_text("# image: a.tif\n# mirror_horizontal: 1\n# mirror_vertical: 0\n"
+                    "[outline]\n1.0\t2.0\n3.0\t4.0\n[landmarks]\n5.0\t6.0\n")
+    annotation = read_annotation_file(str(path))
+    assert annotation["header"]["image"] == "a.tif"
+    assert annotation["outline"].shape == (2, 2) and annotation["landmarks"].tolist() == [[5.0, 6.0]]
+    assert annotation_mirror_flags(annotation) == (True, False)
+    # image of 10 (rows) x 20 (columns), 0-based pixels: x -> 19 - x, y -> 9 - y
+    np.testing.assert_allclose(mirror_pixels([[1, 2]], (10, 20), horizontal=True), [[18, 2]])
+    np.testing.assert_allclose(mirror_pixels([[1, 2]], (10, 20), vertical=True), [[1, 7]])
+    plain = tmp_path / "plain.txt"
+    plain.write_text("1\t2\n3\t4\n")
+    assert read_annotation_file(str(plain)) is None
+    assert read_annotation_file(str(tmp_path / "missing.txt")) is None

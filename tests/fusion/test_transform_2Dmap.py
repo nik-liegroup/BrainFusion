@@ -150,3 +150,12 @@ class TestExtendGrid:
         bad_grids = [np.array([[1, 2, 3]]), np.array([1, 2])]
         with pytest.raises(ValueError):
             extend_grid(bad_grids, x_extend=0.1, y_extend=0.1)
+
+
+def test_extend_grid_of_axis_aligned_grids_has_a_real_spacing():
+    # on a regular axis-aligned grid half of the neighbour pairs have dx == 0 (vertical neighbours): the spacing
+    # must still be the grid step, not 0 (which made np.arange blow up)
+    xs, ys = np.meshgrid(np.arange(5) * 2.0, np.arange(5) * 2.0)
+    grid = np.column_stack([xs.ravel(), ys.ravel()])
+    extended, shape = extend_grid([grid, grid + 0.5], x_extend=0.0, y_extend=0.0)
+    assert extended.shape[0] < 400 and shape[0] > 3 and shape[1] > 3

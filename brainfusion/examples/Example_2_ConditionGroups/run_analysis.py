@@ -19,7 +19,6 @@ LOADER_KWARGS = dict(
     afm_variables={"modulus": "Reduced apparent elastic modulus"},
     batchforce_filename="data.csv",
     grid_conv_filename="GridInversionMatrix.csv",
-    boundary_filename="outline",
     # Named groups here become `Sample.metadata`, e.g. {'animal_number': 1, 'condition': 'Control', 'stage': 37}
     name_pattern=r"#(?P<animal_number>\d+)_.*?_(?P<condition>[A-Za-z]+)_Stage(?P<stage>\d+)_(?P<date>\d+)",
     name_converters={"animal_number": int, "stage": int},
