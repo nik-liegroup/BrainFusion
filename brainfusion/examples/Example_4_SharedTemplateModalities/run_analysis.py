@@ -21,8 +21,8 @@ from brainfusion import load_fused_analysis, pairwise_correlate_by_density, plot
 here = os.path.dirname(__file__)
 results_folder = os.path.join(here, "results")
 
-h5_path_a = os.path.join(here, "..", "Example_1_AverageMap", "results", "analysis.h5")  # e.g. AFM
-h5_path_b = os.path.join(here, "..", "Example_2_ConditionGroups", "results", "analysis.h5")  # e.g. Brillouin
+h5_path_a = os.path.join(here, "..", "Example_1_AverageMap", "results", "fusion.h5")  # e.g. AFM
+h5_path_b = os.path.join(here, "..", "Example_2_ConditionGroups", "results", "fusion.h5")  # e.g. Brillouin
 
 # Each file becomes one Sample carrying its own averaged map, own grid, own (shared) contour
 sample_a = load_fused_analysis(h5_path_a, key_quant="modulus")[0]

@@ -1,12 +1,12 @@
 from itertools import combinations
 
 import numpy as np
-import pandas as pd
 from scipy.spatial import cKDTree
-from scipy.stats import pearsonr, fisher_exact
+from scipy.stats import pearsonr, spearmanr
 
 from brainfusion.utils import mask_contour
-from brainfusion.fusion.grouping import extract_groups, extract_group_native_data
+from brainfusion.fusion.grouping import extract_groups, extract_group_native_data, group_average_entry
+from brainfusion.fusion.interpolation import resample_points, typical_spacing
 
 
 def correlate_on_shared_grid(data_a, data_b, grid, contour, name_a='A', name_b='B'):
@@ -25,8 +25,9 @@ def correlate_on_shared_grid(data_a, data_b, grid, contour, name_a='A', name_b='
 
     Returns
     -------
-    dict with keys 'pearson_correlation', 'pearson_p_value', 'n_points', 'valid_mask', name_a and name_b
-    (the two full, unmasked datasets as given).
+    dict with keys 'pearson_correlation', 'pearson_p_value', 'spearman_correlation', 'spearman_p_value', 'n_points',
+    'valid_mask', name_a and name_b (the two full, unmasked datasets as given). The p-values assume independent points;
+    neighbouring grid points of a map are not, so treat them as descriptive.
     """
     data_a, data_b = np.asarray(data_a, dtype=float), np.asarray(data_b, dtype=float)
     inside = mask_contour(contour, grid)
@@ -36,9 +37,12 @@ def correlate_on_shared_grid(data_a, data_b, grid, contour, name_a='A', name_b='
         raise ValueError(f"Not enough valid overlapping points to correlate ({int(valid.sum())} found).")
 
     correlation, p_value = pearsonr(data_a[valid], data_b[valid])
+    rank_correlation, rank_p_value = spearmanr(data_a[valid], data_b[valid])
     return {
         'pearson_correlation': correlation,
         'pearson_p_value': p_value,
+        'spearman_correlation': rank_correlation,
+        'spearman_p_value': rank_p_value,
         'n_points': int(valid.sum()),
         'valid_mask': valid,
         name_a: data_a,
@@ -53,15 +57,24 @@ def compute_max_radius(grid):
     return distances[:, 1] / 2
 
 
-def average_within_radius(reference_grid, other_grid, other_data, radius='max', average_func=np.nanmean):
+def average_within_radius(reference_grid, other_grid, other_data, radius='max', average_func=np.nanmean,
+                          exclusive=True):
     """
     For each point in `reference_grid`, average every `other_data` value whose `other_grid` position falls
-    within `radius` of it. Each `other_grid` point is used by at most one reference point (whichever it
-    falls within first), so overlapping radii never double-count a value.
+    within `radius` of it.
 
-    `radius='max'` (default) uses `compute_max_radius(reference_grid)` - the largest radius around each
-    reference point that still doesn't overlap its neighbors' circles. Pass a single number instead to use
-    the same radius everywhere.
+    `radius` is
+      - 'max' (default): `compute_max_radius(reference_grid)` - the largest radius around each reference point
+        that still doesn't overlap its neighbors' circles;
+      - one number: the same radius everywhere;
+      - a list/array with one radius per reference point, e.g. the footprint of each measurement (the contact
+        radius of an indentation, the focal spot of a point measurement, ...).
+    Radii are in the units of the grids.
+
+    `exclusive=True` (default): each `other_grid` point is used by at most one reference point (whichever it falls
+    within first), so overlapping circles never double-count a value. `exclusive=False`: every reference point
+    averages everything inside its own circle, so a value may enter several averages - what you want when the
+    circles are physical footprints that may overlap.
 
     Returns
     -------
@@ -70,18 +83,21 @@ def average_within_radius(reference_grid, other_grid, other_data, radius='max', 
     radius : (len(reference_grid),) array
         The radius actually used at each reference point.
     """
-    if radius == 'max':
+    if isinstance(radius, str):
+        if radius != 'max':
+            raise ValueError(f"radius must be 'max', a number or one number per reference point, not {radius!r}")
         radius = compute_max_radius(reference_grid)
-    elif isinstance(radius, (float, int)):
-        radius = np.full(len(reference_grid), radius)
+    else:
+        radius = np.broadcast_to(np.asarray(radius, dtype=float), (len(reference_grid),)).copy()
 
+    other_data = np.asarray(other_data, dtype=float)
     tree = cKDTree(other_grid)
     avg_values = np.full(len(reference_grid), np.nan)
     assigned_mask = np.zeros(len(other_grid), dtype=bool)
 
     for i, point in enumerate(reference_grid):
         indices = tree.query_ball_point(point, radius[i])
-        valid_indices = [idx for idx in indices if not assigned_mask[idx]]
+        valid_indices = [idx for idx in indices if not (exclusive and assigned_mask[idx])]
         if valid_indices:
             avg_values[i] = average_func(other_data[valid_indices])
             assigned_mask[valid_indices] = True
@@ -90,7 +106,8 @@ def average_within_radius(reference_grid, other_grid, other_data, radius='max', 
 
 
 def correlate_around_reference_grid(reference_data, reference_grid, other_data, other_grid, contour,
-                                    radius='max', average_func=np.nanmean, name_a='reference', name_b='other'):
+                                    radius='max', average_func=np.nanmean, name_a='reference', name_b='other',
+                                    exclusive=True):
     """
     Pearson-correlate two datasets that live on DIFFERENT grids of noticeably different density (e.g. sparse
     AFM indentation points vs a dense per-pixel Brillouin/myelin image), by picking one of them as the
@@ -125,7 +142,8 @@ def correlate_around_reference_grid(reference_data, reference_grid, other_data, 
 
     Returns
     -------
-    dict with keys 'pearson_correlation', 'pearson_p_value', 'n_points', 'valid_mask', 'radii',
+    dict with keys 'pearson_correlation', 'pearson_p_value', 'spearman_correlation', 'spearman_p_value', 'n_points',
+    'valid_mask', 'radii',
     'reference_grid' (restricted to points inside `contour`, matching 'radii'/name_a/name_b 1:1), name_a
     (the reference data, inside-contour only) and name_b (the radius-averaged 'other' value at each
     reference point, NaN where nothing fell within radius).
@@ -134,16 +152,21 @@ def correlate_around_reference_grid(reference_data, reference_grid, other_data, 
     reference_grid = reference_grid[inside]
     reference_data = np.asarray(reference_data, dtype=float)[inside]
 
+    if not isinstance(radius, str) and np.ndim(radius) > 0:   # one radius per reference point: keep the inside ones
+        radius = np.asarray(radius, dtype=float)[inside]
     avg_other, radii = average_within_radius(reference_grid, other_grid, np.asarray(other_data, dtype=float),
-                                             radius, average_func)
+                                             radius, average_func, exclusive)
     valid = ~np.isnan(avg_other)
     if valid.sum() < 2:
         raise ValueError(f"Not enough valid overlapping points to correlate ({int(valid.sum())} found).")
 
     correlation, p_value = pearsonr(reference_data[valid], avg_other[valid])
+    rank_correlation, rank_p_value = spearmanr(reference_data[valid], avg_other[valid])
     return {
         'pearson_correlation': correlation,
         'pearson_p_value': p_value,
+        'spearman_correlation': rank_correlation,
+        'spearman_p_value': rank_p_value,
         'n_points': int(valid.sum()),
         'valid_mask': valid,
         'radii': radii,
@@ -153,70 +176,49 @@ def correlate_around_reference_grid(reference_data, reference_grid, other_data, 
     }
 
 
-def analyse_correlation_percentile(data_a, data_b, percentile_a=50, percentile_b=50, name_a="A", name_b="B"):
+def correlate_group_maps(analysis, key_quant, group_a, group_b, method=None, resample='gaussian', sigma='auto',
+                         radius=None, target='auto', min_weight=0.25):
     """
-    Beyond a plain Pearson correlation, also test co-occurrence: threshold each dataset at its own
-    percentile (default: median) to call each point "present"/"absent" in that dataset, then run a Fisher
-    exact test on the resulting 2x2 contingency table - e.g. "are high-stiffness points more likely than
-    chance to also be high-myelin points", independent of the linear Pearson relationship.
+    Correlate the averaged maps of two groups of a fusion made with `group_field`, whether or not they live on the same
+    points. With a method on the shared grid (Mean, Median, Sum) the two maps share their points and are correlated
+    directly - also with "GMM", whose groups all live on the components of one clustering of all samples. Only maps on
+    different grids (e.g. from separate fusions) are resampled: the finer of the two maps onto the points of the coarser one (`target='auto'`; or 'a' / 'b'), by `resample` ('gaussian', 'radius' or 'nearest', see
+    `resample_points`; `sigma`, `radius`, `min_weight` as there), and the correlation is taken over the points of the
+    target inside the outline that have a value in both.
 
-    `data_a`/`data_b` must already be paired point-by-point - e.g. `correlate_around_reference_grid`'s or
-    `correlate_on_shared_grid`'s name_a/name_b outputs, masked by their own 'valid_mask'.
+    method: which clustering of the fusion (default: its first). Returns what `correlate_on_shared_grid` returns, with the
+    two groups' values (only the points used) under their group names, plus 'grid' (those points), 'contour' and 'resample'
+    (what was done).
     """
-    data_a, data_b = np.asarray(data_a), np.asarray(data_b)
-    if len(data_a) < 2:
-        raise ValueError("Not enough values to correlate.")
+    entry_a, entry_b = (group_average_entry(analysis, g, method) for g in (group_a, group_b))
+    contour = analysis['template_contours'][0]
+    grid_a, grid_b = np.asarray(entry_a['grid'], dtype=float), np.asarray(entry_b['grid'], dtype=float)
+    data_a = np.asarray(entry_a['dataset'][key_quant], dtype=float)
+    data_b = np.asarray(entry_b['dataset'][key_quant], dtype=float)
 
-    correlation, p_value = pearsonr(data_a, data_b)
-    a_present = data_a >= np.percentile(data_a, percentile_a)
-    b_present = data_b >= np.percentile(data_b, percentile_b)
-    cond_prop_table, stats_results = conditional_probability_table(a_present, b_present, name_a, name_b)
+    if grid_a.shape == grid_b.shape and np.array_equal(grid_a, grid_b):
+        result = correlate_on_shared_grid(data_a, data_b, grid_a, contour, name_a=group_a, name_b=group_b)
+        keep = result['valid_mask']
+        result.update({group_a: data_a[keep], group_b: data_b[keep], 'grid': grid_a[keep], 'contour': contour,
+                       'resample': 'none: shared grid'})
+        return result
 
-    results = {
-        "pearson_correlation": correlation,
-        "pearson_p_value": p_value,
-        f"present_percentile_{name_a}": percentile_a,
-        f"present_percentile_{name_b}": percentile_b,
-        "probability_table": cond_prop_table,
-    }
-    return results, stats_results, a_present, b_present
-
-
-def conditional_probability_table(a_present, b_present, name_a="A", name_b="B"):
-    """The 2x2 contingency table + Fisher exact test behind `analyse_correlation_percentile`."""
-    assert len(a_present) == len(b_present)
-    a_absent, b_absent = ~a_present, ~b_present
-
-    def safe_div(numerator, denominator):
-        return numerator / denominator if denominator > 0 else np.nan
-
-    n11 = np.sum(a_present & b_present)
-    n12 = np.sum(a_present & b_absent)
-    n21 = np.sum(a_absent & b_present)
-    n22 = np.sum(a_absent & b_absent)
-
-    cond_prop_table = pd.DataFrame({
-        f"{name_b} absent": [safe_div(n22, np.sum(b_absent)), safe_div(n12, np.sum(b_absent))],
-        f"{name_b} present": [safe_div(n21, np.sum(b_present)), safe_div(n11, np.sum(b_present))],
-    }, index=[f"{name_a} absent", f"{name_a} present"])
-
-    contingency_table = np.array([[n22, n21], [n12, n11]])
-    oddsratio, p_value = fisher_exact(contingency_table)
-
-    # Confidence interval for the odds ratio (Woolf's method): log(OR) +/- 1.96 * SE(log(OR))
-    with np.errstate(divide='ignore', invalid='ignore'):
-        log_or = np.log(oddsratio)
-        se_log_or = np.sqrt(1 / contingency_table[0, 0] + 1 / contingency_table[0, 1] +
-                            1 / contingency_table[1, 0] + 1 / contingency_table[1, 1])
-        ci_low, ci_high = np.exp(log_or - 1.96 * se_log_or), np.exp(log_or + 1.96 * se_log_or)
-
-    stats_results = {
-        "contingency_table": contingency_table,
-        "odds_ratio": oddsratio,
-        "fisher_p_value": p_value,
-        "odds_ratio_CI_95": (ci_low, ci_high),
-    }
-    return cond_prop_table, stats_results
+    if target not in ('auto', 'a', 'b'):
+        raise ValueError(f"target must be 'auto', 'a' or 'b', not {target!r}")
+    if target == 'auto':
+        target = 'a' if typical_spacing(grid_a) >= typical_spacing(grid_b) else 'b'
+    if target == 'a':
+        reference_grid, reference_data, other_grid, other_data = grid_a, data_a, grid_b, data_b
+    else:
+        reference_grid, reference_data, other_grid, other_data = grid_b, data_b, grid_a, data_a
+    other_on_reference = resample_points(other_grid, other_data, reference_grid, method=resample, sigma=sigma,
+                                         radius=radius, min_weight=min_weight)
+    values_a, values_b = (reference_data, other_on_reference) if target == 'a' else (other_on_reference, reference_data)
+    result = correlate_on_shared_grid(values_a, values_b, reference_grid, contour, name_a=group_a, name_b=group_b)
+    keep = result['valid_mask']
+    result.update({group_a: values_a[keep], group_b: values_b[keep], 'grid': reference_grid[keep], 'contour': contour,
+                   'resample': f"{resample} onto the points of group {group_a if target == 'a' else group_b}"})
+    return result
 
 
 def pairwise_correlate_groups(group_maps, grid, contour, key_quant, groups=None):

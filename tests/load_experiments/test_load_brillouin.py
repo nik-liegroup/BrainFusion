@@ -11,7 +11,7 @@ from brainfusion.load_experiments.load_brillouin import load_brillouin_experimen
 
 
 def make_brillouin_folder(base_path, name="#1_sample", grid_offset=0.0, mirror_horizontal=0, transform=True,
-                          annotate=True):
+                          annotate=True, matrix=(2.0, 2.0)):
     folder = base_path / name
     (folder / "Export").mkdir(parents=True)
     image_dir = folder / "Plots" / "Overview_BMrep0"
@@ -22,7 +22,7 @@ def make_brillouin_folder(base_path, name="#1_sample", grid_offset=0.0, mirror_h
                   "quality_pass": [1.0, 0.0, 1.0]}).to_csv(folder / "Export" / "scan_BMrep0_data_driftcorrected.csv", index=False)
 
     if transform:
-        np.savetxt(image_dir / "TransformMatrices" / "ov_transform.csv", np.diag([2.0, 2.0, 1.0]), delimiter=",")
+        np.savetxt(image_dir / "TransformMatrices" / "ov_transform.csv", np.diag([*matrix, 1.0]), delimiter=",")
     Image.fromarray(np.arange(100, dtype=np.uint8).reshape(10, 10)).save(image_dir / "ov.png")
     if annotate:
         (folder / "Plots" / "outline_brainfusion.txt").write_text(
@@ -45,6 +45,21 @@ class TestLoadBrillouinExperiment:
         assert sample.bg_image.shape == (10, 10)
         assert sample.scale.shape == (3, 3)
         assert sample.filename == "#1_sample"
+
+    def test_image_frame_has_the_orientation_of_the_image_with_y_up(self, tmp_path):
+        folder = make_brillouin_folder(tmp_path, matrix=(-2.0, 2.0))   # the stage x axis points against the image's
+        stage = load_brillouin_experiment(str(folder), brillouin_variables=["shift"])
+        image = load_brillouin_experiment(str(folder), brillouin_variables=["shift"], image_frame=True)
+        # stage x runs against the image's x; the image's y runs downwards, the frame's upwards: a half turn of the stage frame
+        np.testing.assert_allclose(image.grid, -stage.grid)
+        np.testing.assert_allclose(image.contour, -stage.contour)
+        np.testing.assert_allclose(image.landmarks, -stage.landmarks)
+
+    def test_image_frame_of_a_stage_frame_that_matches_the_image_is_flipped_in_y(self, tmp_path):
+        folder = make_brillouin_folder(tmp_path)
+        stage = load_brillouin_experiment(str(folder), brillouin_variables=["shift"])
+        image = load_brillouin_experiment(str(folder), brillouin_variables=["shift"], image_frame=True)
+        np.testing.assert_allclose(image.grid, stage.grid * [1, -1])
 
     def test_z_not_overwritten_if_explicitly_requested(self, tmp_path):
         sample = load_brillouin_experiment(str(make_brillouin_folder(tmp_path)), brillouin_variables=["shift", "z"])

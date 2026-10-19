@@ -6,7 +6,8 @@ import pytest
 import matplotlib.pyplot as plt
 
 from brainfusion.plotting.maps import (render_data_on_contour, get_zoom_limits, plot_contours,
-                                       plot_transformed_grid, plot_average_map, plot_average_map_arrays)
+                                       plot_transformed_grid, plot_average_map, plot_average_map_arrays,
+                                       plot_aligned_outlines, fit_markers_to_spacing)
 
 SQUARE = np.array([[-1, -1], [1, -1], [1, 1], [-1, 1], [-1, -1]], dtype=float)
 
@@ -44,6 +45,34 @@ class TestRenderDataOnContour:
         assert image.shape == (4, 4)
         plt.close(fig)
 
+    def test_regular_grid_is_drawn_as_touching_squares(self):
+        fig, ax = plt.subplots()
+        xx, yy = np.meshgrid(np.arange(-0.4, 0.5, 0.2), np.arange(-0.4, 0.5, 0.2))
+        grid = np.column_stack([xx.ravel(), yy.ravel()])
+        mappable = render_data_on_contour(ax, np.arange(len(grid), dtype=float), grid, SQUARE, mask=True)
+        rectangles = mappable.get_paths()
+        assert len(rectangles) == len(grid)
+        widths = {round(np.ptp(path.vertices[:, 0]), 6) for path in rectangles}
+        assert widths == {0.2}  # one grid pitch: neighbours touch
+        plt.close(fig)
+
+    def test_grid_with_different_pitch_in_x_and_y_gets_touching_cells(self):
+        fig, ax = plt.subplots()
+        xx, yy = np.meshgrid(np.arange(-0.4, 0.5, 0.2), np.arange(-0.45, 0.5, 0.15))
+        grid = np.column_stack([xx.ravel(), yy.ravel()])
+        mappable = render_data_on_contour(ax, np.arange(len(grid), dtype=float), grid, SQUARE, mask=True)
+        sizes = {(round(np.ptp(p.vertices[:, 0]), 6), round(np.ptp(p.vertices[:, 1]), 6)) for p in mappable.get_paths()}
+        assert sizes == {(0.2, 0.15)}
+        plt.close(fig)
+
+    def test_irregular_points_stay_a_scatter(self):
+        fig, ax = plt.subplots()
+        rng = np.random.default_rng(0)
+        grid = rng.uniform(-0.9, 0.9, size=(30, 2))
+        mappable = render_data_on_contour(ax, np.arange(30, dtype=float), grid, SQUARE, mask=True)
+        assert mappable.get_offsets().shape[0] == 30
+        plt.close(fig)
+
     def test_unmasked_scatter_keeps_every_point(self):
         fig, ax = plt.subplots()
         grid = np.array([[0.0, 0.0], [5.0, 5.0]])
@@ -62,6 +91,40 @@ class TestPlotContours:
         fig = plot_contours(template, matched)
         assert fig is not None
         plt.close(fig)
+
+
+class TestAutoMarkerSize:
+
+    def test_markers_are_as_wide_as_the_point_spacing(self):
+        rng = np.random.default_rng(0)
+        grid = np.column_stack([x.ravel() for x in np.meshgrid(np.arange(10) * 1.0, np.arange(10) * 1.0)])
+        grid = grid + rng.normal(0, 0.05, grid.shape)   # slightly warped: not a regular grid any more
+        fig, ax = plt.subplots(figsize=(4, 4))
+        render_data_on_contour(ax, np.arange(100.0), grid, SQUARE * 20, marker_size='auto')
+        ax.set_xlim(-1, 10)
+        ax.set_ylim(-1, 10)
+        ax.set_aspect('equal')
+        fit_markers_to_spacing(ax)
+        side_points = np.sqrt(ax.collections[0].get_sizes()[0])
+        axes_width_points = ax.get_window_extent().width * 72 / fig.dpi
+        assert side_points == pytest.approx(axes_width_points / 11, rel=0.1)   # one unit of 11 across the axes
+        plt.close(fig)
+
+    def test_unknown_marker_size_is_an_error(self):
+        fig, ax = plt.subplots()
+        with pytest.raises(ValueError):
+            render_data_on_contour(ax, np.arange(5.0), np.random.default_rng(1).random((5, 2)), SQUARE, marker_size='big')
+        plt.close(fig)
+
+
+class TestPlotAlignedOutlines:
+
+    def test_saves_the_overlay_of_the_aligned_outlines(self, tmp_path):
+        theta = np.linspace(0, 2 * np.pi, 20)
+        template = np.column_stack((np.cos(theta), np.sin(theta)))
+        analysis = {"template_contours": [template], "measurement_contours": [template * 0.9, template * 1.1]}
+        plot_aligned_outlines(analysis, output_path=str(tmp_path / "outlines.png"))
+        assert (tmp_path / "outlines.png").stat().st_size > 0
 
 
 class TestPlotTransformedGrid:
@@ -145,3 +208,13 @@ class TestPlotAverageMap:
     def test_raises_if_group_requested_without_group_field(self):
         with pytest.raises(ValueError, match="group_field"):
             plot_average_map(self._analysis(with_groups=False), "value", group="Control")
+
+
+class TestRegularGridPitchesUnits:
+
+    @pytest.mark.parametrize("unit", [1.0, 1e-6])
+    def test_grid_is_regular_in_metres_and_micrometres(self, unit):
+        from brainfusion.plotting.maps import _regular_grid_pitches
+        x, y = np.meshgrid(np.arange(20) * 20.89 * unit, np.arange(25) * 20.85 * unit)
+        pitches = _regular_grid_pitches(np.column_stack([x.ravel(), y.ravel()]))
+        assert pitches == pytest.approx((20.89 * unit, 20.85 * unit))

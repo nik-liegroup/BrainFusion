@@ -3,6 +3,8 @@
 at fusion time. `merge_keys` builds a combined group field BEFORE fusion, when the group identity you
 actually want is more than one metadata dimension at once (e.g. condition AND modality)."""
 
+import warnings
+
 import numpy as np
 
 from brainfusion.sample import replace
@@ -50,15 +52,35 @@ def list_groups(analysis, group_field):
 def extract_groups(analysis):
     """
     The groups `run_fusion(..., group_field=...)` computed for this analysis, in the order they were
-    computed - just `list(analysis['group_datasets'].keys())`. Raises if this analysis wasn't fused with a
-    `group_field` (use `list_groups(analysis, some_field)` to inspect an arbitrary metadata field instead).
+    computed. Raises if this analysis wasn't fused with a `group_field` (use `list_groups(analysis, some_field)`
+    to inspect an arbitrary metadata field instead).
     """
-    if 'group_datasets' not in analysis:
-        raise ValueError("This analysis wasn't fused with a group_field - see run_fusion(..., group_field=...).")
-    return list(analysis['group_datasets'].keys())
+    if 'group_averaged' in analysis:
+        return list(analysis['group_averaged'][analysis['averaged_methods'][0]].keys())
+    if 'group_datasets' in analysis:   # a result file written before the groups were averaged with every method
+        return list(analysis['group_datasets'].keys())
+    raise ValueError("This analysis wasn't fused with a group_field - see run_fusion(..., group_field=...).")
 
 
-def group_average_on_shared_grid(analysis, group_field, groups=None):
+def group_average_entry(analysis, group, method=None):
+    """
+    The averaged map of one group of a fusion made with `group_field`, with the same content as `analysis['averaged'][method]`:
+    {'grid', 'dataset', 'n', 'spread', 'standard_error'} (method default: the first of the fusion). The grid of a 'GMM'
+    group is its own; that of the other methods is the shared grid.
+    """
+    if 'group_averaged' in analysis:
+        groups = analysis['group_averaged'][method or analysis['averaged_methods'][0]]
+        if group not in groups:
+            raise ValueError(f"No group '{group}' in this analysis; groups: {list(groups)}")
+        return groups[group]
+    if 'group_datasets' in analysis:   # a result file written before the groups were averaged with every method
+        if method not in (None, *analysis.get('averaged_methods', [])[:1]):
+            raise ValueError(f"This older result file has group maps only for its first method, not for '{method}'.")
+        return {'grid': analysis['measurement_interpolated_grid'], 'dataset': analysis['group_datasets'][group]}
+    raise ValueError("This analysis wasn't fused with a group_field - see run_fusion(..., group_field=...).")
+
+
+def group_average_on_shared_grid(analysis, group_field, groups=None, method='Mean'):
     """
     Split a pooled `run_fusion`/`brain_fusion` result into per-group averaged maps that all live on the
     analysis's own shared grid, using each sample's `.metadata[group_field]` (e.g. `group_field='condition'`
@@ -91,6 +113,8 @@ def group_average_on_shared_grid(analysis, group_field, groups=None):
     groups : list, optional
         Which group values to compute, and in what order. Defaults to every unique value found
         (see `list_groups`).
+    method : 'Mean' (default), 'Median' or 'Sum'
+        How the samples of a group are averaged at every grid point (NaN values are ignored).
 
     Returns
     -------
@@ -99,13 +123,16 @@ def group_average_on_shared_grid(analysis, group_field, groups=None):
     contour : (N, 2) array
         The analysis's template contour.
     group_maps : dict {group_value: {key: (P,) array}}
-        `nanmean` of every dataset key across each group's samples.
+        The `method` average (default: mean) of every dataset key across each group's samples.
     """
     per_sample = analysis.get('measurement_trafo_datasets')
     if not per_sample or per_sample[0] is None:
         raise ValueError("This analysis has no per-sample data resampled onto a shared grid - re-run "
                          "run_fusion/brain_fusion with clustering='Mean', 'Median' or 'Sum' (not 'GMM').")
 
+    projections = {'Mean': np.nanmean, 'Median': np.nanmedian, 'Sum': np.nansum}
+    if method not in projections:
+        raise ValueError(f"method must be one of {list(projections)}, not {method!r}")
     values = np.array([m[group_field] for m in analysis['measurement_metadata']])
     groups = list_groups(analysis, group_field) if groups is None else groups
     keys = per_sample[0].keys()
@@ -115,8 +142,10 @@ def group_average_on_shared_grid(analysis, group_field, groups=None):
         sample_idx = np.where(values == group)[0]
         if len(sample_idx) == 0:
             raise ValueError(f"No samples found with metadata['{group_field}'] == '{group}'.")
-        group_maps[group] = {key: np.nanmean(np.array([per_sample[i][key] for i in sample_idx]), axis=0)
-                             for key in keys}
+        with warnings.catch_warnings():   # a grid point without a value in any sample of the group is NaN, as intended
+            warnings.filterwarnings('ignore', message='(All-NaN slice|Mean of empty slice)')
+            group_maps[group] = {key: projections[method](np.array([per_sample[i][key] for i in sample_idx]), axis=0)
+                                 for key in keys}
 
     return analysis['measurement_interpolated_grid'], analysis['template_contours'][0], group_maps
 

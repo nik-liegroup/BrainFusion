@@ -13,7 +13,7 @@ template coordinate space first, via one shared `run_fusion` call, before radius
 Loops per myelin animal rather than pooling myelin first - keeps AFM correlated against each myelin animal
 individually. If the myelin images ARE from the same animals as the AFM measurements, this preserves that
 per-animal pairing; if not (unpaired cohorts), average the per-animal correlations afterward, or fuse the
-myelin samples into their own averaged analysis.h5 first (own `run_fusion` call, see Example_1) and correlate
+myelin samples into their own averaged fusion.h5 first (own `run_fusion` call, see Example_1) and correlate
 the two files' own average grids directly instead - see Example_4.
 """
 
@@ -27,7 +27,7 @@ here = os.path.dirname(__file__)
 results_folder = os.path.join(here, "results")
 rename_key = "value"
 
-afm_h5 = os.path.join(here, "..", "Example_1_AverageMap", "results", "analysis.h5")
+afm_h5 = os.path.join(here, "..", "Example_1_AverageMap", "results", "fusion.h5")
 afm_samples = load_fused_analysis(afm_h5, key_quant="modulus", rename_key=rename_key, metadata={"modality": "AFM"})
 
 myelin_samples = load_microscopy_all(os.path.join(here, "data", "Myelin"), boundary_filename="BrainBoundary")
@@ -40,7 +40,7 @@ myelin_samples = [replace(s, dataset={rename_key: s.dataset["Channel_3"]},
 FUSION_KWARGS = dict(contour_template="average", outline_averaging="median", contour_interp_n=200,
                      clustering="Mean")
 analysis = run_fusion(afm_samples + myelin_samples, FUSION_KWARGS,
-                      results_path=os.path.join(results_folder, "analysis.h5"))
+                      results_path=os.path.join(results_folder, "fusion.h5"))
 
 plot_sample_warps(analysis, results_folder, key_quant=rename_key, cmap="hot", cbar_label=rename_key)
 

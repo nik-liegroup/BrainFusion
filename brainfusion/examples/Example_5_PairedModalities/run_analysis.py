@@ -33,7 +33,7 @@ FUSION_KWARGS = dict(contour_template="average", outline_averaging="median", con
 for animal in sorted(afm_by_animal.keys() & brillouin_by_animal.keys()):
     pair_results = os.path.join(results_folder, f"animal_{animal}")
     analysis = run_fusion([afm_by_animal[animal], brillouin_by_animal[animal]], FUSION_KWARGS,
-                          results_path=os.path.join(pair_results, "analysis.h5"))
+                          results_path=os.path.join(pair_results, "fusion.h5"))
     plot_sample_warps(analysis, pair_results, key_quant=afm_key, cmap="hot", cbar_label=afm_key)
 
     grid = analysis["measurement_interpolated_grid"]

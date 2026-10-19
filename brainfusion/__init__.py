@@ -6,15 +6,22 @@ from brainfusion.load_experiments import (load_batchforce_all, load_batchforce_s
                                           load_parquet_samples, load_template_sample, load_fused_analysis)
 from brainfusion.correlation import (correlate_on_shared_grid, pairwise_correlate_groups,
                                      pairwise_correlate_by_density, correlate_groups, correlate_groups_by_density,
-                                     correlate_around_reference_grid, average_within_radius, compute_max_radius,
-                                     analyse_correlation_percentile, conditional_probability_table)
-from brainfusion.plotting import (plot_sample_warps, plot_verification_grids, plot_average_map,
+                                     correlate_around_reference_grid, correlate_group_maps, average_within_radius, compute_max_radius)
+from brainfusion.plotting import (plot_sample_warps, plot_aligned_outlines, plot_verification_grids, plot_average_map,
+                                  plot_average_statistic,
                                   plot_average_map_arrays, plot_correlation_masks, plot_correlation_with_radii,
                                   plot_norm_corr)
 from brainfusion.io import (read_parquet_file, append_parquet_file, export_analysis, import_analysis,
                             check_parameters, parse_name, attach_metadata)
 from brainfusion.utils import mask_contour
-from brainfusion.fusion import (brain_fusion, run_fusion, fuse_boundaries, fuse_grids, fuse_measurement_datasets,
+from brainfusion.stats import (animal_maps, average_map, pairwise_map_correlations, split_half_reliability, map_consistency,
+                               bootstrap_map_correlation, bootstrap_group_correlation, correlation_vs_animals, bootstrap_map_scalar,
+                               spatial_surrogates, spatial_null_test, summarise_correlations, disattenuate,
+                               save_correlation_results, load_correlation_results, analyse_correlation_percentile,
+                               conditional_probability_table, permutation_scalar_difference, permutation_map_difference)
+from brainfusion.fusion import (brain_fusion, run_fusion, average_outline, fuse_boundaries, fuse_grids, fuse_measurement_datasets, resample_points,
+                                group_average_entry,
+                                average_across_samples, average_statistic,
                                 list_groups, extract_groups, group_average_on_shared_grid,
                                 extract_group_native_data, merge_keys)
 
@@ -35,6 +42,7 @@ __all__ = [
     "plot_sample_warps",
     "plot_verification_grids",
     "plot_average_map",
+    "plot_aligned_outlines",
     "plot_average_map_arrays",
     "plot_correlation_masks",
     "plot_correlation_with_radii",
@@ -49,7 +57,25 @@ __all__ = [
     "group_average_on_shared_grid",
     "extract_group_native_data",
     "merge_keys",
+    "animal_maps",
+    "average_map",
+    "pairwise_map_correlations",
+    "split_half_reliability",
+    "map_consistency",
+    "bootstrap_map_correlation",
+    "bootstrap_group_correlation",
+    "correlation_vs_animals",
+    "bootstrap_map_scalar",
+    "spatial_surrogates",
+    "spatial_null_test",
+    "summarise_correlations",
+    "disattenuate",
+    "save_correlation_results",
+    "load_correlation_results",
     "correlate_on_shared_grid",
+    "correlate_group_maps",
+    "resample_points",
+    "group_average_entry",
     "pairwise_correlate_groups",
     "pairwise_correlate_by_density",
     "correlate_groups",
@@ -58,10 +84,15 @@ __all__ = [
     "average_within_radius",
     "compute_max_radius",
     "analyse_correlation_percentile",
+    "permutation_scalar_difference",
+    "permutation_map_difference",
     "conditional_probability_table",
     "mask_contour",
     "brain_fusion",
     "fuse_boundaries",
     "fuse_grids",
-    "fuse_measurement_datasets"
+    "fuse_measurement_datasets",
+    "average_across_samples",
+    "average_statistic",
+    "plot_average_statistic",
 ]

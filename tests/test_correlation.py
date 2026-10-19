@@ -4,10 +4,11 @@ import pytest
 from brainfusion.sample import Sample
 from brainfusion.fusion.core import brain_fusion
 from brainfusion.fusion.grouping import group_average_on_shared_grid
+from brainfusion.stats import analyse_correlation_percentile, conditional_probability_table
 from brainfusion.correlation import (correlate_on_shared_grid, pairwise_correlate_groups,
                                      pairwise_correlate_by_density, correlate_groups, correlate_groups_by_density,
                                      average_within_radius, compute_max_radius, correlate_around_reference_grid,
-                                     analyse_correlation_percentile, conditional_probability_table)
+                                     )
 
 
 def circle_sample(cx, cy, r, value, n_contour=40, n_grid=8, filename="s", metadata=None):
@@ -182,6 +183,17 @@ class TestCorrelateGroupsByDensity:
         np.testing.assert_array_equal(result["dense_data"], dense_data)
 
 
+class TestSpearmanOfSharedGrid:
+
+    def test_rank_correlation_is_reported_next_to_pearson(self):
+        grid = np.column_stack([np.arange(20.0), np.zeros(20)])
+        contour = np.array([[-1, -1], [30, -1], [30, 1], [-1, 1], [-1, -1]], dtype=float)
+        data = np.arange(20.0)
+        result = correlate_on_shared_grid(data, np.exp(data / 5), grid, contour)   # monotonic, not linear
+        assert result["spearman_correlation"] == pytest.approx(1.0)
+        assert result["pearson_correlation"] < 1.0
+
+
 class TestAverageWithinRadius:
 
     def test_averages_other_points_within_radius(self):
@@ -201,6 +213,28 @@ class TestAverageWithinRadius:
         other_data = np.array([5.0])
         avg, _ = average_within_radius(reference_grid, other_grid, other_data, radius=1.0)
         assert np.sum(~np.isnan(avg)) == 1
+
+
+    def test_one_radius_per_reference_point(self):
+        reference_grid = np.array([[0.0, 0.0], [10.0, 0.0]])
+        other_grid = np.array([[0.5, 0.0], [1.5, 0.0], [10.5, 0.0], [11.5, 0.0]])
+        other_data = np.array([1.0, 3.0, 10.0, 30.0])
+        avg, radius = average_within_radius(reference_grid, other_grid, other_data, radius=[1.0, 2.0])
+        assert avg == pytest.approx([1.0, 20.0])   # the small circle holds one point, the large one two
+        assert radius == pytest.approx([1.0, 2.0])
+
+    def test_overlapping_footprints_may_share_a_point_when_not_exclusive(self):
+        reference_grid = np.array([[0.0, 0.0], [0.5, 0.0]])
+        other_grid = np.array([[0.25, 0.0]])
+        avg, _ = average_within_radius(reference_grid, other_grid, np.array([5.0]), radius=1.0, exclusive=False)
+        assert avg == pytest.approx([5.0, 5.0])
+
+    def test_radius_of_wrong_length_or_name_is_an_error(self):
+        grid = np.array([[0.0, 0.0], [1.0, 0.0]])
+        with pytest.raises(ValueError):
+            average_within_radius(grid, grid, np.array([1.0, 2.0]), radius=[1.0, 2.0, 3.0])
+        with pytest.raises(ValueError):
+            average_within_radius(grid, grid, np.array([1.0, 2.0]), radius="large")
 
 
 class TestComputeMaxRadius:

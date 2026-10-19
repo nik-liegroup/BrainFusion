@@ -9,7 +9,7 @@ from brainfusion.plotting.image_export import plot_map_on_image
 
 
 def plot_sample_warps(analysis, results_folder, key_quant, image_dataset=False, cbar_label='', cmap='afmhot',
-                      marker_size=20, mask=True, vmin=None, vmax=None, plot_background=False,
+                      marker_size='auto', mask=True, vmin=None, vmax=None, plot_background=False,
                       invert_y=False, **kwargs):
     """
     Render each sample's DTW/warp diagnostic (its data before and after warping onto the template) for one
@@ -22,7 +22,12 @@ def plot_sample_warps(analysis, results_folder, key_quant, image_dataset=False, 
     the stored grid shapes) rather than a scatter of points - only correct for samples actually loaded as
     images (e.g. HCR/microscopy). It additionally requires the analysis to carry a regular interpolation
     grid, so it's incompatible with `clustering="GMM"` (which doesn't build one).
+
+    `marker_size='auto'` (default): the markers of the warped points are one point spacing wide (see
+    `render_data_on_contour`); with `plot_background` a number is needed.
     """
+    if plot_background and isinstance(marker_size, str):
+        raise ValueError("plot_background needs a numeric marker_size, not 'auto'")
     print(f'Plotting: {os.path.basename(os.path.dirname(results_folder))}.')
     os.makedirs(results_folder, exist_ok=True)
 

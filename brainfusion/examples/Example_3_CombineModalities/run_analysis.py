@@ -1,6 +1,6 @@
 """
 Case 3: two modalities (e.g. AFM and Brillouin) fused SEPARATELY - each with its own loader, own run_fusion
-call, own results/analysis.h5 (see Example_1/Example_2), each onto ITS OWN cohort's average shape - so the
+call, own results/fusion.h5 (see Example_1/Example_2), each onto ITS OWN cohort's average shape - so the
 two files do NOT share a coordinate space and can't be correlated as-is.
 
 If your two files DO already share a template (e.g. both used contour_template="first_element" pointing at
@@ -16,8 +16,8 @@ here = os.path.dirname(__file__)
 results_folder = os.path.join(here, "results")
 new_key = "value"  # common name the two modalities' quantities get stored under after loading
 
-h5_path_a = os.path.join(here, "..", "Example_1_AverageMap", "results", "analysis.h5")  # e.g. AFM
-h5_path_b = os.path.join(here, "..", "Example_2_ConditionGroups", "results", "analysis.h5")  # e.g. Brillouin
+h5_path_a = os.path.join(here, "..", "Example_1_AverageMap", "results", "fusion.h5")  # e.g. AFM
+h5_path_b = os.path.join(here, "..", "Example_2_ConditionGroups", "results", "fusion.h5")  # e.g. Brillouin
 
 samples_a = load_fused_analysis(h5_path_a, key_quant="modulus", rename_key=new_key, metadata={"modality": "AFM"})
 samples_a = merge_keys(samples_a, new_key="group", keys_to_merge=["condition", "modality"])
@@ -29,7 +29,7 @@ samples = samples_a + samples_b
 
 FUSION_KWARGS = dict(contour_template="average", outline_averaging="median", contour_interp_n=200,
                      clustering="Mean", group_field="group")
-analysis = run_fusion(samples, FUSION_KWARGS, results_path=os.path.join(results_folder, "analysis.h5"))
+analysis = run_fusion(samples, FUSION_KWARGS, results_path=os.path.join(results_folder, "fusion.h5"))
 
 plot_sample_warps(analysis, results_folder, key_quant=new_key, cmap="hot", cbar_label=new_key)
 

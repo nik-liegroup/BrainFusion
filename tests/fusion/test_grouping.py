@@ -68,6 +68,28 @@ class TestGroupAverageOnSharedGrid:
         assert grid.shape[1] == 2
         assert contour.shape[1] == 2
 
+    def test_median_method_ignores_an_odd_sample_that_moves_the_mean(self):
+        samples = [circle_sample(0, 0, 1, value=1.0, filename="a1", metadata={"group": "A"}),
+                   circle_sample(0.02, 0, 1, value=1.0, filename="a2", metadata={"group": "A"}),
+                   circle_sample(0, 0.02, 1, value=10.0, filename="a3", metadata={"group": "A"})]
+        analysis = brain_fusion(samples, contour_template="average", contour_interp_n=40, clustering="Mean")
+        _, _, mean_maps = group_average_on_shared_grid(analysis, "group")
+        _, _, median_maps = group_average_on_shared_grid(analysis, "group", method="Median")
+        np.testing.assert_allclose(mean_maps["A"]["value"], 4.0)
+        np.testing.assert_allclose(median_maps["A"]["value"], 1.0)
+
+    def test_unknown_method_is_an_error(self, two_group_analysis):
+        with pytest.raises(ValueError, match="method"):
+            group_average_on_shared_grid(two_group_analysis, "group", method="Mode")
+
+    def test_fusion_with_median_clustering_averages_its_groups_by_median(self):
+        samples = [circle_sample(0, 0, 1, value=1.0, filename="a1", metadata={"group": "A"}),
+                   circle_sample(0.02, 0, 1, value=1.0, filename="a2", metadata={"group": "A"}),
+                   circle_sample(0, 0.02, 1, value=10.0, filename="a3", metadata={"group": "A"})]
+        analysis = brain_fusion(samples, contour_template="average", contour_interp_n=40, clustering="Median",
+                                group_field="group")
+        np.testing.assert_allclose(analysis["group_datasets"]["A"]["value"], 1.0)
+
     def test_raises_for_gmm_clustering(self):
         samples = [circle_sample(0, 0, 1, value=1.0, filename="a", metadata={"group": "A"}),
                   circle_sample(0.1, 0, 1, value=2.0, filename="b", metadata={"group": "B"})]

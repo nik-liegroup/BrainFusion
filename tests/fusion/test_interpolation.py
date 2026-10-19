@@ -1,6 +1,7 @@
 import pytest
 import numpy as np
-from brainfusion.fusion.interpolation import nearest_neighbour_interp, fit_coordinates_gmm
+from brainfusion.fusion.interpolation import (nearest_neighbour_interp, fit_coordinates_gmm, gmm_average,
+                                              typical_spacing)
 
 
 class TestNearestNeighbourInterp:
@@ -20,6 +21,20 @@ class TestNearestNeighbourInterp:
         assert result.shape == (len(self.target_points),)
         # Only one source may win per target — values must be in original set or NaN
         assert np.all(np.isnan(result) | np.isin(result, self.values))
+
+    def test_max_distance_leaves_far_targets_empty(self):
+        result = nearest_neighbour_interp(self.org_points, self.values, self.target_points, unique=False,
+                                          max_distance=0.5)
+        np.testing.assert_array_equal(result, [10, 20, 30, 40, np.nan])  # (2, 2) is 1.4 from the nearest point
+
+    def test_max_distance_also_limits_unique(self):
+        result = nearest_neighbour_interp(self.org_points, self.values, np.array([[0, 0], [5, 5]]), unique=True,
+                                          max_distance=0.5)
+        np.testing.assert_array_equal(result, [10, np.nan])
+
+    def test_typical_spacing_is_the_median_nearest_neighbour_distance(self):
+        grid = np.array([[x, y] for x in range(4) for y in range(4)], dtype=float) * 2.5
+        assert typical_spacing(grid) == pytest.approx(2.5)
 
     def test_length_mismatch(self):
         with pytest.raises(ValueError):
@@ -90,3 +105,32 @@ class TestFitCoordinatesGmm:
     def test_invalid_num_components_raises(self):
         with pytest.raises(AssertionError):
             fit_coordinates_gmm(self.grids, self.data_list, num_components='mode')
+
+
+class TestGmmAverage:
+
+    def setup_method(self):
+        rng = np.random.default_rng(0)
+        self.grids = [rng.normal(loc=(0, 0), scale=0.01, size=(10, 2)), rng.normal(loc=(10, 10), scale=0.01, size=(10, 2))]
+        self.data_list = [{"value": np.full(10, 1.0)}, {"value": np.full(10, 5.0)}]
+
+    def test_counts_every_sample_once_per_component(self):
+        result = gmm_average(self.grids, self.data_list)
+        assert result["labels"].shape == (20,)
+        assert result["n"]["value"].max() <= 2
+        assert result["n"]["value"].sum() >= 2
+
+    def test_spread_of_constant_values_is_zero(self):
+        result = gmm_average(self.grids, self.data_list)
+        np.testing.assert_allclose(result["spread"]["value"][np.isfinite(result["spread"]["value"])], 0.0)
+
+    def test_nan_values_are_not_counted(self):
+        data = [{"value": np.full(10, np.nan)}, {"value": np.full(10, 5.0)}]
+        result = gmm_average(self.grids, data)
+        assert result["n"]["value"].max() == 1
+
+    def test_fit_coordinates_gmm_is_the_same_result_without_statistics(self):
+        centres, avg_data = fit_coordinates_gmm(self.grids, self.data_list)
+        full = gmm_average(self.grids, self.data_list)
+        np.testing.assert_allclose(centres, full["grid"])
+        np.testing.assert_allclose(avg_data["value"], full["dataset"]["value"])

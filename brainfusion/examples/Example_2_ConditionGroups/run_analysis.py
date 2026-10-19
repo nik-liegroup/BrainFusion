@@ -28,7 +28,7 @@ FUSION_KWARGS = dict(contour_template="average", outline_averaging="median", con
                      clustering="Mean", group_field="condition")
 
 samples = load_batchforce_all(data_folder, **LOADER_KWARGS)
-analysis = run_fusion(samples, FUSION_KWARGS, results_path=os.path.join(results_folder, "analysis.h5"))
+analysis = run_fusion(samples, FUSION_KWARGS, results_path=os.path.join(results_folder, "fusion.h5"))
 
 plot_sample_warps(analysis, results_folder, key_quant=key_quant, cmap="hot", vmin=0, vmax=500,
                          cbar_label="Reduced elastic modulus (Pa)")

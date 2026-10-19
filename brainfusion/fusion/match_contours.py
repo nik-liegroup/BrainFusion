@@ -31,14 +31,15 @@ def interpolate_contour(contour: np.ndarray, num_points: int) -> np.ndarray:
     return np.vstack((interp_x(new_dists), interp_y(new_dists))).T
 
 
-def align_contours(contour_list, grid_list, landmarks_list=None, template_index=0, fit_routine='ellipse'):
+def align_contours(contour_list, grid_list, landmarks_list=None, template_index=0, fit_routine='ellipse',
+                   landmark_fit='similarity'):
     """
     Align a set of contours to the template contour at `template_index`.
 
     For a sample whose landmark points and the template's landmark points are both given, the affine
     transform is fit directly from that point correspondence (see `match_contour_with_landmarks`) - this
     takes priority over `fit_routine`. Samples without landmarks (or where the template has none) fall back
-    to matching the contour shape via `fit_routine` ('ellipse' or 'bbox').
+    to matching the contour shape via `fit_routine` ('ellipse' or 'bbox'). `landmark_fit`: see `match_contour_with_landmarks`.
 
     Regardless of which route a sample takes, its resulting position is always registered relative to the
     template's own true position - `fit_routine`-based fits only determine shape (rotation/scale), so they
@@ -60,7 +61,7 @@ def align_contours(contour_list, grid_list, landmarks_list=None, template_index=
         # Find rigid affine transformation, then place it at the template's own true position (a no-op for
         # the landmark fit, which already targets that position directly through point correspondence)
         if sample_landmarks is not None and template_landmarks is not None:
-            contour_trafo = match_contour_with_landmarks(sample_landmarks, template_landmarks)
+            contour_trafo = match_contour_with_landmarks(sample_landmarks, template_landmarks, fit=landmark_fit)
         elif fit_routine == 'ellipse':
             shape_trafo, target_shift = match_contour_with_ellipse(contour, contour_list[template_index])
             contour_trafo = shape_trafo + target_shift.inverse
@@ -96,7 +97,7 @@ def align_contours(contour_list, grid_list, landmarks_list=None, template_index=
     return shifted_contours, matched_grids, affine_matrices
 
 
-def match_contour_with_landmarks(a_points: np.ndarray, b_points: np.ndarray) -> AffineTransform:
+def match_contour_with_landmarks(a_points: np.ndarray, b_points: np.ndarray, fit: str = 'similarity') -> AffineTransform:
     """
     Fit an affine transform that maps landmark points `a_points` onto the corresponding `b_points`.
 
@@ -109,6 +110,11 @@ def match_contour_with_landmarks(a_points: np.ndarray, b_points: np.ndarray) -> 
         Landmark points on the source contour.
     b_points : np.ndarray of shape (M, 2)
         Corresponding landmark points on the target contour.
+    fit : 'similarity' (default) or 'affine'
+        'similarity': rotation, uniform scale and translation, least squares over all shared points (needs 2 or more; the
+        right choice for round outlines, and the only stable one when the landmarks lie on a line, where an affine fit
+        has no information perpendicular to the line and squeezes the outline to a sliver). 'affine': also independent
+        x/y scale and shear, with 3 or more non-collinear points (2 points still give a similarity).
 
     Returns
     -------
@@ -126,7 +132,9 @@ def match_contour_with_landmarks(a_points: np.ndarray, b_points: np.ndarray) -> 
     if n_points < 2:
         raise ValueError(f"At least 2 corresponding landmark points are required, got {n_points}")
 
-    transform_type = 'affine' if n_points >= 3 else 'similarity'
+    if fit not in ('similarity', 'affine'):
+        raise ValueError(f"fit must be 'similarity' or 'affine', not {fit!r}")
+    transform_type = 'affine' if (fit == 'affine' and n_points >= 3) else 'similarity'
     return estimate_transform(transform_type, a_points[:n_points], b_points[:n_points])
 
 

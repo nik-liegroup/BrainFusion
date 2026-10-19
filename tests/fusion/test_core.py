@@ -4,7 +4,8 @@ import pytest
 import numpy as np
 
 from brainfusion.sample import Sample, replace
-from brainfusion.fusion.core import fuse_boundaries, fuse_grids, fuse_measurement_datasets, brain_fusion, run_fusion
+from brainfusion.fusion.core import (fuse_boundaries, fuse_grids, fuse_measurement_datasets, brain_fusion, run_fusion,
+                                     average_statistic)
 
 
 def circle_sample(cx, cy, r, n_contour=40, n_grid=8, filename="s", landmarks=None, value=1.0):
@@ -69,6 +70,14 @@ class TestFuseGrids:
         for trafo_data in trafo_data_maps:
             assert set(trafo_data.keys()) == {"value"}
             assert trafo_data["value"].shape == (len(ext_grid),)
+
+    def test_max_gap_leaves_grid_points_far_from_the_measurements_empty(self):
+        far = np.array([[50.0, 50.0], [0.0, 0.0]])  # one point nowhere near any measurement, one in the middle
+        filled, _, _, _, _ = fuse_grids(self.measurement_samples, self.template_contours, ext_grid=far)
+        assert all(np.isfinite(data["value"]).all() for data in filled)  # default: filled in from the nearest point
+        limited, _, _, _, _ = fuse_grids(self.measurement_samples, self.template_contours, ext_grid=far, max_gap=2)
+        for data in limited:
+            assert np.isnan(data["value"][0]) and np.isfinite(data["value"][1])
 
     def test_without_ext_grid_skips_resampling(self):
         trafo_data_maps, trafo_grids, _, _, _ = fuse_grids(self.measurement_samples, self.template_contours,
@@ -185,3 +194,125 @@ class TestRunFusion:
                                                                                       value=99.0)]
         recomputed = run_fusion(samples_v2, {"contour_interp_n": 40}, results_path=results_path, overwrite=True)
         np.testing.assert_allclose(recomputed["measurement_interpolated_dataset"]["value"], 99.0)
+
+
+def varied_samples(n=4, n_grid=30):
+    """Samples with different values (and different point counts per sample are not needed: same grid each)."""
+    samples = []
+    for i in range(n):
+        sample = circle_sample(0.05 * i, 0, 1 + 0.05 * i, n_grid=n_grid, filename=f"s{i}")
+        rng = np.random.default_rng(i)
+        samples.append(replace(sample, dataset={"value": 10.0 * (i + 1) + rng.normal(size=n_grid)}))
+    return samples
+
+
+class TestSeveralClusterings:
+
+    def test_every_method_is_stored_and_the_first_is_the_primary_result(self):
+        result = brain_fusion(varied_samples(), clustering=["Median", "GMM"], contour_interp_n=40)
+        assert result["averaged_methods"] == ["Median", "GMM"]
+        median, gmm = result["averaged"]["Median"], result["averaged"]["GMM"]
+        np.testing.assert_allclose(median["dataset"]["value"], result["measurement_interpolated_dataset"]["value"])
+        assert median["grid"] is result["measurement_interpolated_grid"] or np.array_equal(
+            median["grid"], result["measurement_interpolated_grid"])
+        assert gmm["grid"].shape[0] == gmm["dataset"]["value"].shape[0] == gmm["n"]["value"].shape[0]
+        assert gmm["grid"].shape != median["grid"].shape or not np.array_equal(gmm["grid"], median["grid"])
+        assert result["measurement_interpolated_grid_shape"] is not None
+
+    def test_gmm_first_keeps_the_gmm_grid_as_primary(self):
+        result = brain_fusion(varied_samples(), clustering=["GMM", "Mean"], contour_interp_n=40)
+        assert result["measurement_interpolated_grid_shape"] is None
+        np.testing.assert_allclose(result["measurement_interpolated_dataset"]["value"],
+                                   result["averaged"]["GMM"]["dataset"]["value"])
+
+    def test_n_and_spread_on_the_shared_grid(self):
+        result = brain_fusion(varied_samples(n=4), clustering=["Mean", "Median"], contour_interp_n=40)
+        mean = result["averaged"]["Mean"]
+        assert mean["n"]["value"].max() == 4
+        expected = np.nanstd(np.array([d["value"] for d in result["measurement_trafo_datasets"]]), axis=0, ddof=1)
+        np.testing.assert_allclose(mean["spread"]["value"], expected)
+        assert np.all(result["averaged"]["Median"]["spread"]["value"][np.isfinite(
+            result["averaged"]["Median"]["spread"]["value"])] >= 0)
+
+    def test_single_string_still_works_and_is_listed(self):
+        result = brain_fusion(varied_samples(), clustering="Median", contour_interp_n=40)
+        assert result["averaged_methods"] == ["Median"]
+        assert list(result["averaged"]) == ["Median"]
+
+    def test_duplicates_and_empty_lists_raise(self):
+        for bad in (["Mean", "Mean"], []):
+            with pytest.raises(ValueError, match="different methods"):
+                brain_fusion(varied_samples(), clustering=bad, contour_interp_n=40)
+
+    def test_roundtrip_through_the_h5_cache_keeps_every_method(self, tmp_path):
+        path = str(tmp_path / "analysis.h5")
+        kwargs = {"contour_interp_n": 40, "clustering": ["Median", "GMM"]}
+        fresh = run_fusion(varied_samples(), kwargs, results_path=path)
+        cached = run_fusion(varied_samples(), kwargs, results_path=path)
+        assert cached["averaged_methods"] == ["Median", "GMM"]
+        for method in ("Median", "GMM"):
+            for name in ("grid",):
+                np.testing.assert_allclose(cached["averaged"][method][name], fresh["averaged"][method][name])
+            for name in ("dataset", "n", "spread"):
+                np.testing.assert_allclose(cached["averaged"][method][name]["value"],
+                                           fresh["averaged"][method][name]["value"])
+
+
+class TestAverageStatistic:
+
+    def setup_method(self):
+        self.result = brain_fusion(varied_samples(n=4), clustering=["Mean", "Median", "GMM", "Sum"],
+                                   contour_interp_n=40)
+
+    def test_standard_error_of_the_mean_is_spread_over_root_n(self):
+        _, se = average_statistic(self.result, "value", "Mean", "standard_error")
+        _, spread = average_statistic(self.result, "value", "Mean", "spread")
+        _, n = average_statistic(self.result, "value", "Mean", "n")
+        ok = n > 1
+        np.testing.assert_allclose(se[ok], spread[ok] / np.sqrt(n[ok]))
+
+    def test_the_median_has_a_larger_standard_error_factor(self):
+        _, se = average_statistic(self.result, "value", "Median", "standard_error")
+        _, spread = average_statistic(self.result, "value", "Median", "spread")
+        _, n = average_statistic(self.result, "value", "Median", "n")
+        ok = np.isfinite(se) & (n > 0)
+        np.testing.assert_allclose(se[ok], 1.2533 * spread[ok] / np.sqrt(n[ok]))
+
+    def test_relative_statistics_are_percent_of_the_average(self):
+        _, relative = average_statistic(self.result, "value", "GMM", "relative_spread")
+        _, spread = average_statistic(self.result, "value", "GMM", "spread")
+        average = self.result["averaged"]["GMM"]["dataset"]["value"]
+        ok = np.isfinite(relative)
+        np.testing.assert_allclose(relative[ok], 100 * spread[ok] / average[ok])
+
+    def test_the_standard_error_is_stored_in_the_result_and_the_h5_cache(self, tmp_path):
+        path = str(tmp_path / "analysis.h5")
+        kwargs = {"contour_interp_n": 40, "clustering": ["Median", "GMM"]}
+        fresh = run_fusion(varied_samples(), kwargs, results_path=path)
+        cached = run_fusion(varied_samples(), kwargs, results_path=path)
+        for method in ("Median", "GMM"):
+            np.testing.assert_allclose(cached["averaged"][method]["standard_error"]["value"],
+                                       fresh["averaged"][method]["standard_error"]["value"])
+        _, relative = average_statistic(cached, "value", "Median", "relative_standard_error")
+        assert relative.shape == cached["averaged"]["Median"]["dataset"]["value"].shape
+
+    def test_default_method_is_the_first_one(self):
+        grid, _ = average_statistic(self.result, "value")
+        np.testing.assert_allclose(grid, self.result["averaged"]["Mean"]["grid"])
+
+    def test_sum_has_no_standard_error_and_unknown_statistics_raise(self):
+        with pytest.raises(ValueError, match="sum"):
+            average_statistic(self.result, "value", "Sum", "standard_error")
+        with pytest.raises(ValueError, match="statistic must be one of"):
+            average_statistic(self.result, "value", "Mean", "variance")
+
+
+class TestGivenTemplate:
+
+    def test_a_given_outline_is_the_template_and_not_part_of_the_average(self):
+        from brainfusion.fusion.core import average_outline
+        samples = [circle_sample(0, 0, 1, filename="a", value=1.0), circle_sample(0.1, 0, 1.2, filename="b", value=3.0)]
+        template = average_outline(samples, contour_interp_n=40)
+        analysis = brain_fusion(samples, contour_template=template, contour_interp_n=40, clustering="Mean")
+        assert sorted(str(f) for f in analysis["measurement_filenames"]) == ["a", "b"]
+        assert np.nanmean(analysis["measurement_interpolated_dataset"]["value"]) == pytest.approx(2.0, abs=0.3)

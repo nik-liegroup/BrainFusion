@@ -19,7 +19,7 @@ def make_afm_folder(base_path, name="#1_sample", mirror_horizontal=0, mirror_ver
     grid = {"x_image": [2, 4, 6], "y_image": [2, 4, 6], "x": [2.0, 4.0, 6.0], "y": [2.0, 4.0, 6.0]}
     if long_format:
         pd.DataFrame({"result_parameter": ["Reduced apparent elastic modulus"] * 3, "result": [1.0, 2.0, 3.0],
-                      **grid}).to_csv(folder / "region analysis" / "data.csv", index=False)
+                      "indent_depth": [1e-6, 2e-6, 3e-6], **grid}).to_csv(folder / "region analysis" / "data.csv", index=False)
     else:
         pd.DataFrame({"modulus": [1.0, 2.0, 3.0], **grid}).to_csv(folder / "region analysis" / "data.csv",
                                                                    index=False)
@@ -56,6 +56,12 @@ class TestLoadBatchforceSingle:
         folder = make_afm_folder(tmp_path, long_format=True)
         sample = load_batchforce_single(str(folder), afm_variables={"modulus": "Reduced apparent elastic modulus"})
         np.testing.assert_array_equal(sample.dataset["modulus"], [1.0, 2.0, 3.0])
+
+    def test_long_format_per_point_column_can_be_requested(self, tmp_path):
+        folder = make_afm_folder(tmp_path, long_format=True)
+        sample = load_batchforce_single(str(folder), afm_variables={"modulus": "Reduced apparent elastic modulus",
+                                                                    "depth": "indent_depth"})
+        np.testing.assert_allclose(sample.dataset["depth"], [1e-6, 2e-6, 3e-6])
 
     def test_use_landmarks_false_ignores_them(self, tmp_path):
         sample = load_batchforce_single(str(make_afm_folder(tmp_path)), afm_variables=["modulus"],

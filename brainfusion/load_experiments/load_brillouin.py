@@ -16,7 +16,7 @@ DRIFT_CORRECTED_SUFFIX = '_data_driftcorrected.csv'  # written by brillouin-drif
 
 def load_brillouin_all(base_path, brillouin_variables, data_filename=None, use_landmarks=True, apply_mirror=True,
                        quality_column=None, name_pattern=None, name_converters=None,
-                       data_suffix=DRIFT_CORRECTED_SUFFIX) -> list[Sample]:
+                       data_suffix=DRIFT_CORRECTED_SUFFIX, image_frame=False) -> list[Sample]:
     """
     Load every Brillouin experiment folder (name containing '#') found directly below `base_path`.
 
@@ -28,7 +28,8 @@ def load_brillouin_all(base_path, brillouin_variables, data_filename=None, use_l
     for folder_name, folder_path in iter_experiment_folders(base_path):
         sample = load_brillouin_experiment(folder_path, brillouin_variables, data_filename=data_filename,
                                            use_landmarks=use_landmarks, apply_mirror=apply_mirror,
-                                           quality_column=quality_column, data_suffix=data_suffix)
+                                           quality_column=quality_column, data_suffix=data_suffix,
+                                           image_frame=image_frame)
         if name_pattern is not None:
             sample = attach_metadata(sample, parse_name(folder_name, name_pattern, name_converters))
         samples.append(sample)
@@ -37,7 +38,7 @@ def load_brillouin_all(base_path, brillouin_variables, data_filename=None, use_l
 
 def load_brillouin_experiment(folder_path, brillouin_variables, data_filename=None, use_landmarks=True,
                               apply_mirror=True, quality_column=None, annotation_file=None,
-                              data_suffix=DRIFT_CORRECTED_SUFFIX) -> Sample:
+                              data_suffix=DRIFT_CORRECTED_SUFFIX, image_frame=False) -> Sample:
     """
     Load a Brillouin experiment exported by bmlab's combined-CSV exporter, together with the outline (and
     landmarks) annotated with the roi-annotator.
@@ -64,6 +65,13 @@ def load_brillouin_experiment(folder_path, brillouin_variables, data_filename=No
     writes 'quality_pass'); rows where it is 0 are dropped. With `apply_mirror`, the mirroring noted in the
     annotation header (so that all brains look the same way) is applied to the grid, outline, landmarks and
     background image.
+
+    The sample lives in the stage frame (um) of the setup, and the stage frame of a Brillouin setup is usually a
+    reflection of the image (the matrix has a negative determinant), so a map drawn in it looks mirrored against the
+    image. `image_frame=True` turns grid, outline and landmarks into the frame of the image instead (still um), with
+    the y axis pointing up as in a plot: the linear part of the matrix, normalised to unit scale, then y negated. A map
+    drawn from it looks like the image. This is the frame the AFM samples of `load_batchforce_single` are in, so use it
+    when the sample is fused with AFM data: the outline alignment only rotates, it does not mirror.
     """
     folder_name = os.path.basename(os.path.normpath(folder_path))
     export_dir = os.path.join(folder_path, 'Export')
@@ -131,6 +139,12 @@ def load_brillouin_experiment(folder_path, brillouin_variables, data_filename=No
     if not np.any(np.all((grid >= contour.min(axis=0) - reach) & (grid <= contour.max(axis=0) + reach), axis=1)):
         raise ValueError(f"{folder_name}: the measurement grid of {data_filename} lies far away from the outline - "
                          f"its x/y are probably not absolute stage positions (older bmlab export): export again")
+
+    if image_frame:
+        linear = transform_matrix[:2, :2] / np.sqrt(abs(np.linalg.det(transform_matrix[:2, :2])))
+        linear = np.diag([1.0, -1.0]) @ linear   # pixels count downwards, plots upwards
+        contour, grid = contour @ linear.T, grid @ linear.T
+        landmarks = landmarks @ linear.T if landmarks is not None else None
 
     return Sample(contour=contour, grid=grid, dataset=dataset, scale=transform_matrix, landmarks=landmarks,
                   bg_image=bg_image, filename=folder_name)

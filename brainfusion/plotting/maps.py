@@ -1,7 +1,52 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.collections import PatchCollection
+from matplotlib.patches import Rectangle
 
+from brainfusion.fusion.core import average_statistic
+from brainfusion.fusion.grouping import group_average_entry
+from brainfusion.fusion.interpolation import typical_spacing
 from brainfusion.utils import mask_contour
+
+
+def _regular_grid_pitches(grid, tolerance=0.1, min_fraction=0.95):
+    """(pitch in x, pitch in y) of an axis-aligned regular grid given as an (N, 2) point list - the two may differ -
+    else None (a warped or scattered cloud). Regular: almost all points sit on integer multiples of the pitch of their
+    axis."""
+    if len(grid) < 4:
+        return None
+    pitches, on_lattice = [], np.ones(len(grid), dtype=bool)
+    for axis in (0, 1):
+        coordinate = grid[:, axis]
+        extent = np.ptp(coordinate)
+        if extent == 0:
+            return None
+        # rounded relative to the extent, so grids in metres and in micrometres are treated alike
+        spacings = np.diff(np.unique(np.round(coordinate / extent, 9))) * extent
+        spacings = spacings[spacings > 1e-3 * extent]
+        if len(spacings) == 0:
+            return None
+        pitch = np.median(spacings)
+        offsets = (coordinate - coordinate.min()) / pitch
+        on_lattice &= np.abs(offsets - np.round(offsets)) < tolerance
+        pitches.append(pitch)
+    return tuple(pitches) if np.mean(on_lattice) >= min_fraction else None
+
+
+def fit_markers_to_spacing(ax):
+    """
+    Give every scatter that was drawn with `marker_size='auto'` (see `render_data_on_contour`) markers one point spacing wide
+    on this axes, so neighbours touch. Needs the final size of the axes: call it after the layout (`tight_layout`) and
+    after the axis limits and aspect are set. Independent of the figure size and the resolution.
+    """
+    ax.apply_aspect()
+    width_points = ax.get_window_extent().width * 72 / ax.figure.dpi
+    x_min, x_max = ax.get_xlim()
+    points_per_unit = width_points / abs(x_max - x_min)
+    for collection in ax.collections:
+        spacing = getattr(collection, '_marker_spacing', None)
+        if spacing:
+            collection.set_sizes([(spacing * points_per_unit) ** 2])
 
 
 def render_data_on_contour(ax, data, grid, contour, cmap='afmhot', vmin=None, vmax=None, marker_size=15, mask=True,
@@ -10,8 +55,13 @@ def render_data_on_contour(ax, data, grid, contour, cmap='afmhot', vmin=None, vm
     Draw `data` at `grid` positions on `ax`, clipped to `contour`.
 
     `grid` of shape (H, W, 2) is drawn as an image (`data` reshaped to (H, W)); a flat (N, 2) point cloud is
-    drawn as a scatter instead - the two cases used to be duplicated wherever a map needed drawing. Returns
+    drawn as a scatter instead - or, if it is an axis-aligned regular grid and `marker` is 's', as cells of one
+    grid pitch (in x and in y) each that touch without gaps (`marker_size` is then not used) - the two cases used to be duplicated wherever a map needed drawing. Returns
     the drawn mappable, e.g. for building a colorbar from it.
+
+    `marker_size='auto'` (scatter only): the markers are as wide as the typical spacing of the points, so a warped or
+    scattered cloud is drawn about as densely as a regular grid; the size is set by `fit_markers_to_spacing` once the layout
+    of the axes is known (the plotting functions of this module call it).
     """
     if grid.ndim == 3:
         image = np.asarray(data, dtype=float)
@@ -23,8 +73,28 @@ def render_data_on_contour(ax, data, grid, contour, cmap='afmhot', vmin=None, vm
                          vmax=vmax)
 
     inside = mask_contour(contour, grid) if mask else np.full(grid.shape[0], True)
-    return ax.scatter(np.ma.masked_where(~inside, grid[:, 0]), np.ma.masked_where(~inside, grid[:, 1]), c=data,
-                      cmap=cmap, s=marker_size, marker=marker, vmin=vmin, vmax=vmax)
+    pitches = _regular_grid_pitches(grid) if marker == 's' else None
+    if pitches is not None:
+        # a regular grid: cells of exactly one grid pitch, so neighbours touch (edge in the face colour: no seams)
+        pitch_x, pitch_y = pitches
+        values = np.ma.masked_invalid(np.asarray(data, dtype=float)[inside])
+        squares = PatchCollection([Rectangle((x - pitch_x / 2, y - pitch_y / 2), pitch_x, pitch_y)
+                                   for x, y in grid[inside]],
+                                  cmap=cmap, linewidths=0.4, antialiased=True)
+        squares.set_array(values)
+        squares.set_clim(vmin, vmax)
+        squares.set_edgecolor('face')
+        ax.add_collection(squares)
+        ax.autoscale_view()
+        return squares
+    auto = isinstance(marker_size, str)
+    if auto and marker_size != 'auto':
+        raise ValueError(f"marker_size must be a number or 'auto', not {marker_size!r}")
+    scatter = ax.scatter(np.ma.masked_where(~inside, grid[:, 0]), np.ma.masked_where(~inside, grid[:, 1]), c=data,
+                         cmap=cmap, s=15 if auto else marker_size, marker=marker, vmin=vmin, vmax=vmax)
+    if auto:
+        scatter._marker_spacing = typical_spacing(grid[inside])
+    return scatter
 
 
 def get_zoom_limits(contour, margin_fraction=0.1):
@@ -67,8 +137,35 @@ def plot_contours(template_contour, matched_contours, invert_y=False):
     return fig
 
 
+def plot_aligned_outlines(analysis, invert_y=False, output_path=None):
+    """
+    Overlay the outlines of all samples of a fusion after the affine alignment (grey, one per sample: centred, rotated and
+    scaled onto the ellipse of the template; the outline's shape is untouched) with the average outline (blue) that is
+    computed from them - how well the outlines agree before the point-wise (DTW) matching, and which samples stand out.
+    Works on an `analysis` from `run_fusion`/`brain_fusion` or one re-loaded from its .h5 file. If `output_path` is given,
+    saves the figure there (dpi=300, tight bbox) and closes it.
+    """
+    template = np.asarray(analysis['template_contours'][0])
+    contours = [np.asarray(c) for c in analysis['measurement_contours']]
+    fig, ax = plt.subplots(figsize=(8, 8))
+    for i, contour in enumerate(contours):
+        ax.plot(contour[:, 0], contour[:, 1], color='grey', lw=1, alpha=0.5,
+                label=f'aligned outline of each sample ({len(contours)})' if i == 0 else None)
+    ax.plot(template[:, 0], template[:, 1], color='blue', ls='--', lw=3, label='average outline (template)')
+    ax.set_aspect('equal')
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.legend(loc='upper right', fontsize=9, frameon=False)
+    if invert_y:
+        ax.invert_yaxis()
+    if output_path:
+        fig.savefig(output_path, dpi=300, bbox_inches='tight')
+        plt.close(fig)
+    return fig
+
+
 def plot_transformed_grid(contour, template_contour, data, grid, trafo_grid, key_quant, trafo_data=None,
-                          cbar_label='', cmap='afmhot', marker_size=30, vmin=None, vmax=None, mask=False,
+                          cbar_label='', cmap='afmhot', marker_size='auto', vmin=None, vmax=None, mask=False,
                           invert_y=False):
     """
     Show a sample's DTW correspondence to the template, plus its data map before and after warping.
@@ -120,6 +217,8 @@ def plot_transformed_grid(contour, template_contour, data, grid, trafo_grid, key
             ax.invert_yaxis()
 
     plt.tight_layout()
+    for ax in axes:
+        fit_markers_to_spacing(ax)
     return fig
 
 
@@ -158,6 +257,7 @@ def plot_average_map_arrays(data_avg, grid_avg, template_contour, cbar_label='',
         ax.invert_yaxis()
 
     plt.tight_layout()
+    fit_markers_to_spacing(ax)
 
     if output_path:
         fig.savefig(output_path, dpi=300, bbox_inches='tight')
@@ -167,7 +267,7 @@ def plot_average_map_arrays(data_avg, grid_avg, template_contour, cbar_label='',
 
 
 def plot_average_map(analysis, key_quant, group=None, cbar_label='', cmap='viridis', marker_size=15, vmin=None,
-                     vmax=None, mask=True, invert_y=False, output_path=None):
+                     vmax=None, mask=True, invert_y=False, output_path=None, method=None):
     """
     Plot one averaged map straight from a `run_fusion`/`brain_fusion` result - a thin wrapper around
     `plot_average_map_arrays` that pulls the right grid/contour/data out of `analysis` first, so you don't
@@ -176,20 +276,45 @@ def plot_average_map(analysis, key_quant, group=None, cbar_label='', cmap='virid
     `plot_average_map_arrays` directly instead.
 
     Without `group`, plots the overall average across every sample. With `group` given (e.g.
-    `group='Control'`), plots just that one group's average, read straight from
-    `analysis['group_datasets']` - `analysis` must have been fused with `run_fusion(...,
-    group_field=...)`. Use `extract_groups(analysis)` to see what groups exist.
+    `group='Control'`), plots just that one group's average - `analysis` must have been fused with
+    `run_fusion(..., group_field=...)`. Use `extract_groups(analysis)` to see what groups exist.
+
+    `method` ('Mean', 'Median', 'GMM', ...) plots that clustering of a fusion made with several (`clustering=[...]`)
+    instead of the first one; GMM maps live on the GMM components (also for a group).
     """
     template_contour = analysis['template_contours'][0]
     grid = analysis['measurement_interpolated_grid']
-    if group is None:
-        data = analysis['measurement_interpolated_dataset'][key_quant]
+    if group is not None:
+        entry = group_average_entry(analysis, group, method)
+        grid, data = entry['grid'], entry['dataset'][key_quant]
+    elif method is not None:
+        grid = analysis['averaged'][method]['grid']
+        data = analysis['averaged'][method]['dataset'][key_quant]
     else:
-        if 'group_datasets' not in analysis:
-            raise ValueError("A 'group' was given but this analysis wasn't fused with a group_field - see "
-                             "run_fusion(..., group_field=...).")
-        data = analysis['group_datasets'][group][key_quant]
+        data = analysis['measurement_interpolated_dataset'][key_quant]
 
     return plot_average_map_arrays(data, grid, template_contour, cbar_label=cbar_label, cmap=cmap,
+                                   marker_size=marker_size, vmin=vmin, vmax=vmax, mask=mask, invert_y=invert_y,
+                                   output_path=output_path)
+
+
+_STATISTIC_LABELS = {'n': 'samples per point', 'spread': 'spread between samples', 'relative_spread':
+                     'spread between samples (% of the average)', 'standard_error': 'standard error',
+                     'relative_standard_error': 'standard error (% of the average)'}
+
+
+def plot_average_statistic(analysis, key_quant, statistic='standard_error', method=None, cbar_label=None, cmap='viridis',
+                           marker_size=15, vmin=0, vmax=None, mask=True, invert_y=False, output_path=None):
+    """
+    Map of how well an averaged map is known: the number of samples, the spread or the standard error at every point
+    (see `brainfusion.fusion.core.average_statistic` for the definitions), for one clustering `method` of a fusion.
+    """
+    grid, values = average_statistic(analysis, key_quant, method, statistic)
+    contour = analysis['template_contours'][0]
+    if vmax is None and mask:   # the 99th percentile inside the outline: a few outliers outside it would stretch the scale
+        inside = values[mask_contour(contour, grid) & np.isfinite(values)]
+        vmax = np.percentile(inside, 99) if len(inside) else None
+    return plot_average_map_arrays(values, grid, contour,
+                                   cbar_label=cbar_label or _STATISTIC_LABELS[statistic], cmap=cmap,
                                    marker_size=marker_size, vmin=vmin, vmax=vmax, mask=mask, invert_y=invert_y,
                                    output_path=output_path)

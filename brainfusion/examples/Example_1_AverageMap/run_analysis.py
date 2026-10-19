@@ -25,7 +25,7 @@ FUSION_KWARGS = dict(contour_template="average", outline_averaging="median", con
 # `load_template_sample(...)`, put it first in `samples` below, and set contour_template="first_element".
 
 samples = load_batchforce_all(data_folder, **LOADER_KWARGS)
-analysis = run_fusion(samples, FUSION_KWARGS, results_path=os.path.join(results_folder, "analysis.h5"))
+analysis = run_fusion(samples, FUSION_KWARGS, results_path=os.path.join(results_folder, "fusion.h5"))
 
 # Per-sample diagnostics: each animal's data before/after warping onto the shared template
 plot_sample_warps(analysis, results_folder, key_quant=key_quant, cmap="hot", vmin=0, vmax=500,

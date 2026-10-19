@@ -5,6 +5,8 @@
 # via a Sample list. Self-contained - nothing outside this subpackage is needed to run it besides the shared
 # `Sample` type, `brainfusion.utils`, and `brainfusion.io` (for `run_fusion`'s cache step).
 
-from .core import brain_fusion, run_fusion, fuse_boundaries, fuse_grids, fuse_measurement_datasets
-from .grouping import (list_groups, extract_groups, group_average_on_shared_grid, extract_group_native_data,
-                       merge_keys)
+from .core import (brain_fusion, run_fusion, average_outline, fuse_boundaries, fuse_grids, fuse_measurement_datasets,
+                   average_across_samples, average_statistic)
+from .interpolation import resample_points
+from .grouping import (list_groups, extract_groups, group_average_entry, group_average_on_shared_grid,
+                       extract_group_native_data, merge_keys)

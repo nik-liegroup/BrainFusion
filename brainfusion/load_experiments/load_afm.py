@@ -48,7 +48,8 @@ def load_batchforce_single(folder_path, afm_variables, batchforce_filename='data
     (point, quantity) - a 'result_parameter' column naming the quantity (e.g. 'Reduced apparent elastic
     modulus') and a 'result' column holding its value - which is auto-detected and pivoted into one row per
     point. For that format, pass `afm_variables` as a dict mapping the desired `Sample.dataset` key to the
-    quantity's `result_parameter` label instead, e.g. `{'modulus': 'Reduced apparent elastic modulus'}`.
+    quantity's `result_parameter` label instead, e.g. `{'modulus': 'Reduced apparent elastic modulus'}`. A per-point
+    column of that table which is not a quantity (e.g. 'indent_depth') can be requested in the same way.
 
     The annotation is 'Pics/calibration/outline_brainfusion.txt' of the experiment, or `annotation_file` if
     given (e.g. the file of another run on the same sample with an identical 'overview.tif'); see
@@ -69,9 +70,12 @@ def load_batchforce_single(folder_path, afm_variables, batchforce_filename='data
     if 'result_parameter' in data.columns and 'result' in data.columns:
         wide = data.pivot_table(index=['x_image', 'y_image'], columns='result_parameter', values='result',
                                 aggfunc='first').reset_index()
-        if 'x' in data.columns and 'y' in data.columns:
-            stage_xy = data.drop_duplicates(subset=['x_image', 'y_image'])[['x_image', 'y_image', 'x', 'y']]
-            wide = wide.merge(stage_xy, on=['x_image', 'y_image'], how='left')
+        # plain per-point columns of the table (e.g. 'indent_depth') can be requested like a quantity
+        per_point = [label for label in variable_map.values() if label not in wide.columns and label in data.columns]
+        extra = ['x', 'y'] if 'x' in data.columns and 'y' in data.columns else []
+        if extra or per_point:
+            first = data.drop_duplicates(subset=['x_image', 'y_image'])[['x_image', 'y_image'] + extra + per_point]
+            wide = wide.merge(first, on=['x_image', 'y_image'], how='left')
         data = wide
     afm_data = {key: np.array(data[label]) for key, label in variable_map.items()}
 

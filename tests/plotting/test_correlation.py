@@ -41,6 +41,18 @@ class TestPlotNormCorr:
         assert fig is not None
         plt.close(fig)
 
+    def test_prints_both_correlations_and_the_point_count_and_keeps_each_axis_in_its_own_units(self):
+        rng = np.random.default_rng(0)
+        x = rng.uniform(100, 600, 50)           # Pa
+        y = 5.2 + 0.0001 * x + rng.normal(0, 0.01, 50)   # GHz
+        fig = plot_norm_corr(x, y, pearson=0.9, spearman=0.8, label1="Modulus (Pa)", label2="Shift (GHz)", note="no p-value")
+        ax = fig.axes[0]
+        text = " ".join(t.get_text() for t in ax.texts)
+        assert "Pearson r = 0.90" in text and "Spearman" in text and "n = 50" in text and "no p-value" in text
+        assert ax.get_xlim()[1] > 500 and ax.get_ylim()[1] < 6      # not forced to equal axes
+        assert ax.get_xlabel() == "Modulus (Pa)"
+        plt.close(fig)
+
     def test_works_without_stats(self):
         fig = plot_norm_corr([1, 2, 3], [1, 2, 3])
         assert fig is not None

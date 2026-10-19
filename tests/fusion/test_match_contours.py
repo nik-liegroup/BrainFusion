@@ -345,6 +345,21 @@ class TestMatchContourWithLandmarks:
         transform = match_contour_with_landmarks(a_points, b_points)
         np.testing.assert_allclose(transform(a_points), b_points, atol=1e-8)
 
+    def test_collinear_landmarks_give_a_similarity_not_a_squeezed_outline(self):
+        # optic fissure, lens and eye end on a line: an affine fit has no information across the line
+        a_points = np.array([[0.0, 0.0], [1.0, 0.0], [3.0, 0.0]])
+        b_points = a_points * 2 + [1, 1]
+        transform = match_contour_with_landmarks(a_points, b_points)
+        np.testing.assert_allclose(transform(a_points), b_points, atol=1e-8)
+        np.testing.assert_allclose(transform(np.array([[0.0, 1.0]])), [[1.0, 3.0]], atol=1e-8)   # across the line: uniform scale 2
+
+    def test_affine_fit_on_request(self):
+        a_points = np.array([[0, 0], [1, 0], [0, 1]], dtype=float)
+        b_points = a_points * [3, 1]
+        np.testing.assert_allclose(match_contour_with_landmarks(a_points, b_points, fit='affine')(a_points), b_points, atol=1e-8)
+        with pytest.raises(ValueError, match="fit must be"):
+            match_contour_with_landmarks(a_points, b_points, fit='projective')
+
     def test_extra_points_beyond_shared_length_are_ignored(self):
         a_points = np.array([[0, 0], [1, 0], [0, 1], [5, 5]])
         b_points = np.array([[0, 0], [1, 0], [0, 1]]) + [2, -1]
