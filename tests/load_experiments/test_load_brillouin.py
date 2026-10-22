@@ -115,13 +115,56 @@ class TestLoadBrillouinExperiment:
         folder = make_brillouin_folder(tmp_path / "a", annotate=False)
         other = make_brillouin_folder(tmp_path / "b")
         sample = load_brillouin_experiment(str(folder), brillouin_variables=["shift"],
-                                           annotation_file=str(other / "Plots" / "outline_brainfusion.txt"))
+                                           outline=str(other / "Plots" / "outline_brainfusion.txt"))
         assert sample.contour.shape == (4, 2)
+
+    def test_a_name_without_txt_is_a_folder_of_repeats_averaged(self, tmp_path):
+        # the image named in a repeat's header is relative to 'Plots', not to the repeat folder
+        folder = make_brillouin_folder(tmp_path)
+        repeats = folder / "Plots" / "outline_repeats"
+        repeats.mkdir()
+        text = (folder / "Plots" / "outline_brainfusion.txt").read_text()
+        for n in (1, 2):
+            (repeats / f"outline_brainfusion_repeat{n}.txt").write_text(text)
+        single = load_brillouin_experiment(str(folder), brillouin_variables=["shift"])
+        averaged = load_brillouin_experiment(str(folder), brillouin_variables=["shift"], outline="outline_repeats",
+                                             outline_kwargs={"contour_interp_n": 40, "outline_averaging": "median"})
+        assert averaged.contour.shape == (39, 2)
+        np.testing.assert_allclose(averaged.contour.min(axis=0), single.contour.min(axis=0), atol=1e-9)
 
     def test_missing_annotation_raises(self, tmp_path):
         folder = make_brillouin_folder(tmp_path, annotate=False)
-        with pytest.raises(AssertionError, match="No roi-annotator file"):
+        with pytest.raises(FileNotFoundError, match="No roi-annotator file"):
             load_brillouin_experiment(str(folder), brillouin_variables=["shift"])
+
+    def write_stack(self, folder, header):
+        # two grid columns of four planes from 2 um above the surface in steps of 1 um, the second column 3 um deeper
+        rows = [(x, x, z + offset, 10 * x + plane, 1.0) for x, offset in ((2.0, 0.0), (4.0, 3.0))
+                for plane, z in enumerate([0.0, 1.0, 2.0, 3.0])]
+        text = "".join(f"#{line}\n" for line in header) + "x,y,z,shift,quality_pass\n" + "".join(
+            ",".join(map(str, row)) + "\n" for row in rows)
+        (folder / "Export" / "scan_BMrep0_data_driftcorrected.csv").write_text(text)
+
+    def test_min_depth_keeps_the_planes_below_the_surface(self, tmp_path):
+        folder = make_brillouin_folder(tmp_path)
+        self.write_stack(folder, ["grid_z_min_um,-2.0", "grid_z_step_um,1.0"])
+        sample = load_brillouin_experiment(str(folder), brillouin_variables=["shift"], min_depth_um=0)
+        np.testing.assert_array_equal(sample.dataset["shift"], [22, 23, 42, 43])
+        everything = load_brillouin_experiment(str(folder), brillouin_variables=["shift"])
+        assert len(everything.dataset["shift"]) == 8
+
+    def test_min_depth_without_z_range_keeps_all_planes(self, tmp_path, capsys):
+        folder = make_brillouin_folder(tmp_path)
+        self.write_stack(folder, ["grid_z_min_um,", "grid_z_step_um,"])
+        sample = load_brillouin_experiment(str(folder), brillouin_variables=["shift"], min_depth_um=0)
+        assert len(sample.dataset["shift"]) == 8
+        assert "all planes kept" in capsys.readouterr().out
+
+    def test_min_depth_below_every_plane_raises(self, tmp_path):
+        folder = make_brillouin_folder(tmp_path)
+        self.write_stack(folder, ["grid_z_min_um,-20.0", "grid_z_step_um,1.0"])
+        with pytest.raises(ValueError, match="no plane"):
+            load_brillouin_experiment(str(folder), brillouin_variables=["shift"], min_depth_um=0)
 
     def test_image_without_transform_matrix_raises(self, tmp_path):
         folder = make_brillouin_folder(tmp_path, transform=False)
@@ -140,5 +183,5 @@ class TestLoadBrillouinAll:
                                      name_pattern=r"#(?P<animal_number>\d+)_Stage(?P<stage>\d+)",
                                      name_converters={"animal_number": int, "stage": int})
         assert [s.filename for s in samples] == ["#1_Stage37", "#2_Stage40"]
-        assert samples[0].metadata == {"animal_number": 1, "stage": 37}
-        assert samples[1].metadata == {"animal_number": 2, "stage": 40}
+        assert samples[0].metadata == {"length_unit": "um", "animal_number": 1, "stage": 37}
+        assert samples[1].metadata == {"length_unit": "um", "animal_number": 2, "stage": 40}

@@ -31,8 +31,35 @@ def interpolate_contour(contour: np.ndarray, num_points: int) -> np.ndarray:
     return np.vstack((interp_x(new_dists), interp_y(new_dists))).T
 
 
+def _principal_ellipse(contour):
+    """Centre (2,), direction of the major axis (radians, modulo pi), and the lengths of the major and the minor axis of the
+    ellipse fitted to `contour` (OpenCV: its first axis `w` lies at `angle`, its second one `h` at angle + 90)."""
+    (cx, cy), (w, h), angle = cv2.fitEllipse(np.asarray(contour, dtype=np.float32))
+    return np.array([cx, cy]), np.deg2rad(angle + 90 if h >= w else angle), max(w, h), min(w, h)
+
+
+def canonical_ellipse_trafos(contours, template_index=0):
+    """
+    Affine transforms that put every contour into one fixed orientation: the template's fitted ellipse is centred, with its
+    major axis along y and its minor axis along x; every other contour gets the same (centred, major axis along y, both axes
+    scaled to the template's). So the orientation does not depend on how the first outline happened to lie in the image.
+
+    A fitted ellipse knows its axis, not which end is which: every contour is turned by the smallest rotation (within +-90
+    degrees) that brings its major axis onto y, so outlines that lie in a similar orientation in the images (within 90
+    degrees of each other) keep their ends on the same side.
+    """
+    ellipses = [_principal_ellipse(c) for c in contours]
+    _, _, template_major, template_minor = ellipses[template_index]
+    trafos = []
+    for centre, major, length, width in ellipses:
+        turn = (np.pi / 2 - major + np.pi / 2) % np.pi - np.pi / 2   # onto y, the shorter way round (-90 to +90 degrees)
+        trafos.append(AffineTransform(translation=-centre) + AffineTransform(rotation=turn)
+                      + AffineTransform(scale=(template_minor / width, template_major / length)))
+    return trafos
+
+
 def align_contours(contour_list, grid_list, landmarks_list=None, template_index=0, fit_routine='ellipse',
-                   landmark_fit='similarity'):
+                   landmark_fit='similarity', canonical_axes=False):
     """
     Align a set of contours to the template contour at `template_index`.
 
@@ -40,6 +67,9 @@ def align_contours(contour_list, grid_list, landmarks_list=None, template_index=
     transform is fit directly from that point correspondence (see `match_contour_with_landmarks`) - this
     takes priority over `fit_routine`. Samples without landmarks (or where the template has none) fall back
     to matching the contour shape via `fit_routine` ('ellipse' or 'bbox'). `landmark_fit`: see `match_contour_with_landmarks`.
+    `canonical_axes` (ellipse fit only): instead of taking the orientation of the first outline, put the first outline's
+    fitted ellipse with its major axis along y and its minor axis along x, and match the others to it
+    (`canonical_ellipse_trafos`), so every fusion has the same orientation.
 
     Regardless of which route a sample takes, its resulting position is always registered relative to the
     template's own true position - `fit_routine`-based fits only determine shape (rotation/scale), so they
@@ -53,6 +83,7 @@ def align_contours(contour_list, grid_list, landmarks_list=None, template_index=
     if landmarks_list is None:
         landmarks_list = [None] * len(contour_list)
     template_landmarks = landmarks_list[template_index]
+    canonical = canonical_ellipse_trafos(contour_list, template_index) if canonical_axes and fit_routine == 'ellipse' else None
 
     contour_trafos, matched_contours, matched_points = [], [], []
     for i, contour in enumerate(contour_list):
@@ -62,6 +93,8 @@ def align_contours(contour_list, grid_list, landmarks_list=None, template_index=
         # the landmark fit, which already targets that position directly through point correspondence)
         if sample_landmarks is not None and template_landmarks is not None:
             contour_trafo = match_contour_with_landmarks(sample_landmarks, template_landmarks, fit=landmark_fit)
+        elif canonical is not None:
+            contour_trafo = canonical[i]
         elif fit_routine == 'ellipse':
             shape_trafo, target_shift = match_contour_with_ellipse(contour, contour_list[template_index])
             contour_trafo = shape_trafo + target_shift.inverse

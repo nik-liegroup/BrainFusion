@@ -107,7 +107,7 @@ class TestCorrelateGroupMaps:
     def test_shared_grid_groups_are_correlated_directly(self, samples):
         analysis = brain_fusion(samples, contour_interp_n=40, clustering="Median", group_field="group")
         result = correlate_group_maps(analysis, "value", "A", "B")
-        assert result["pearson_correlation"] == pytest.approx(1.0, abs=0.02)   # both are a gradient along x
+        assert result["pearson_correlation"] == pytest.approx(1.0, abs=0.05)   # both are a gradient along one axis
         assert result["resample"].startswith("none")
 
     def test_gmm_groups_of_one_fusion_are_correlated_directly(self, samples):

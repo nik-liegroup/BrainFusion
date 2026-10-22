@@ -6,7 +6,7 @@ import pytest
 import matplotlib.pyplot as plt
 
 from brainfusion.plotting.maps import (render_data_on_contour, get_zoom_limits, plot_contours,
-                                       plot_transformed_grid, plot_average_map, plot_average_map_arrays,
+                                       plot_transformed_grid, plot_average_map, plot_average_map_arrays, scalebar_length,
                                        plot_aligned_outlines, fit_markers_to_spacing)
 
 SQUARE = np.array([[-1, -1], [1, -1], [1, 1], [-1, 1], [-1, -1]], dtype=float)
@@ -204,6 +204,22 @@ class TestPlotAverageMap:
         fig = plot_average_map(self._analysis(with_groups=True), "value", group="Control")
         assert fig is not None
         plt.close(fig)
+
+    def test_scalebar_in_the_units_of_the_first_sample(self):
+        analysis = self._analysis()
+        analysis["measurement_metadata"] = [{"length_unit": "m"}]
+        assert scalebar_length(analysis, 100) == pytest.approx(1e-4)
+        analysis["measurement_metadata"] = [{"length_unit": "um"}]
+        assert scalebar_length(analysis, 100) == pytest.approx(100)
+        fig = plot_average_map(analysis, "value", scalebar_um=0.5)
+        bars = [line for line in fig.axes[0].lines if len(line.get_xdata()) == 2]
+        assert len(bars) == 1 and np.ptp(bars[0].get_xdata()) == pytest.approx(0.5)
+        assert not fig.axes[0].texts   # no label
+        plt.close(fig)
+
+    def test_scalebar_needs_a_length_unit(self):
+        with pytest.raises(ValueError, match="length unit"):
+            scalebar_length(self._analysis(), 100)
 
     def test_raises_if_group_requested_without_group_field(self):
         with pytest.raises(ValueError, match="group_field"):

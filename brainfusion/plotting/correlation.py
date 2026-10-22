@@ -6,7 +6,7 @@ import matplotlib.colors as mcolors
 import matplotlib.patches as patches
 from scipy import stats
 
-from .maps import render_data_on_contour
+from .maps import render_data_on_contour, draw_scalebar
 
 
 def format_p_value(p):
@@ -108,9 +108,11 @@ def plot_correlation_with_radii(reference_grid, other_grid, contour, radii, data
 
 
 def plot_correlation_masks(grid, data_a, data_b, contour, label_a="A", label_b="B", results_folder=None,
-                           results_name="correlation_masks", cmap_a="hot", cmap_b="hot", cbar_label_a="", cbar_label_b=""):
+                           results_name="correlation_masks", cmap_a="hot", cmap_b="hot", cbar_label_a="", cbar_label_b="",
+                           scalebar=None):
     """Plot two datasets living on the same grid side by side (e.g. two groups from `pairwise_correlate_groups`).
-    Supports boolean or numeric data. A regular grid is drawn as cells that touch (see `render_data_on_contour`)."""
+    Supports boolean or numeric data. A regular grid is drawn as cells that touch (see `render_data_on_contour`).
+    `scalebar`: length of an unlabelled scale bar in both panels, in the units of `grid` (see `scalebar_length`)."""
     fig, axs = plt.subplots(1, 2, figsize=(16, 8))
 
     bool_cmap = mcolors.ListedColormap(['black', 'red'])
@@ -127,6 +129,8 @@ def plot_correlation_masks(grid, data_a, data_b, contour, label_a="A", label_b="
         ax.set_aspect('equal')
         ax.set_xticks([])
         ax.set_yticks([])
+        if scalebar:
+            draw_scalebar(ax, scalebar)
 
     if results_folder:
         os.makedirs(results_folder, exist_ok=True)

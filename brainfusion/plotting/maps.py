@@ -222,13 +222,41 @@ def plot_transformed_grid(contour, template_contour, data, grid, trafo_grid, key
     return fig
 
 
+_UNIT_PER_UM = {'m': 1e-6, 'mm': 1e-3, 'um': 1.0}
+
+
+def scalebar_length(analysis, length_um):
+    """`length_um` micrometres in the units of a fusion's maps (those of its first sample, metadata 'length_unit', which
+    the loaders set: AFM 'm', Brillouin 'um'). The fusion aligns every outline onto the first sample, so the maps have
+    its size."""
+    metadata = list(analysis.get('measurement_metadata') or [{}])
+    unit = metadata[0].get('length_unit') if metadata and metadata[0] else None
+    if unit not in _UNIT_PER_UM:
+        raise ValueError(f"the fusion's first sample has no known length unit (metadata 'length_unit': {unit!r}), so a "
+                         f"scale bar cannot be drawn")
+    return length_um * _UNIT_PER_UM[unit]
+
+
+def draw_scalebar(ax, length, color='black', linewidth=3, margin=0.06):
+    """A horizontal bar of `length` (data units) in the lower right corner of `ax`, without a label (give its length in
+    the legend). Call it after the axis limits are set."""
+    x_min, x_max = sorted(ax.get_xlim())
+    y_min, y_max = sorted(ax.get_ylim())
+    x_end = x_max - margin * (x_max - x_min)
+    y = y_min + margin * (y_max - y_min)
+    ax.plot([x_end - length, x_end], [y, y], color=color, lw=linewidth, solid_capstyle='butt')
+
+
 def plot_average_map_arrays(data_avg, grid_avg, template_contour, cbar_label='', cmap='viridis', marker_size=15,
-                            vmin=None, vmax=None, mask=True, invert_y=False, output_path=None):
+                            vmin=None, vmax=None, mask=True, invert_y=False, output_path=None, scalebar=None):
     """
     Plot one fused/averaged data map over the template contour, from plain arrays - e.g. a derived map you
     computed yourself (a difference map, a percentile mask, ...) that has no corresponding `analysis` dict
     to pull it back out of. For plotting straight from a `run_fusion`/`brain_fusion` result instead, use
     `plot_average_map`, which wraps this.
+
+    `scalebar`: the length of a scale bar in the units of `grid_avg` (no label is written; `scalebar_length` converts
+    micrometres for a fusion).
 
     If `output_path` is given, saves the figure there (dpi=300, tight bbox) and closes it - the figure is
     still returned, but by then it's already closed, so treat that as "saved, not for further use".
@@ -255,6 +283,8 @@ def plot_average_map_arrays(data_avg, grid_avg, template_contour, cbar_label='',
     ax.set_yticks([])
     if invert_y and grid_avg.ndim != 3:
         ax.invert_yaxis()
+    if scalebar:
+        draw_scalebar(ax, scalebar)
 
     plt.tight_layout()
     fit_markers_to_spacing(ax)
@@ -267,7 +297,7 @@ def plot_average_map_arrays(data_avg, grid_avg, template_contour, cbar_label='',
 
 
 def plot_average_map(analysis, key_quant, group=None, cbar_label='', cmap='viridis', marker_size=15, vmin=None,
-                     vmax=None, mask=True, invert_y=False, output_path=None, method=None):
+                     vmax=None, mask=True, invert_y=False, output_path=None, method=None, scalebar_um=None):
     """
     Plot one averaged map straight from a `run_fusion`/`brain_fusion` result - a thin wrapper around
     `plot_average_map_arrays` that pulls the right grid/contour/data out of `analysis` first, so you don't
@@ -281,6 +311,8 @@ def plot_average_map(analysis, key_quant, group=None, cbar_label='', cmap='virid
 
     `method` ('Mean', 'Median', 'GMM', ...) plots that clustering of a fusion made with several (`clustering=[...]`)
     instead of the first one; GMM maps live on the GMM components (also for a group).
+
+    `scalebar_um`: draw an unlabelled scale bar of this many micrometres (see `scalebar_length`).
     """
     template_contour = analysis['template_contours'][0]
     grid = analysis['measurement_interpolated_grid']
@@ -295,7 +327,8 @@ def plot_average_map(analysis, key_quant, group=None, cbar_label='', cmap='virid
 
     return plot_average_map_arrays(data, grid, template_contour, cbar_label=cbar_label, cmap=cmap,
                                    marker_size=marker_size, vmin=vmin, vmax=vmax, mask=mask, invert_y=invert_y,
-                                   output_path=output_path)
+                                   output_path=output_path,
+                                   scalebar=None if scalebar_um is None else scalebar_length(analysis, scalebar_um))
 
 
 _STATISTIC_LABELS = {'n': 'samples per point', 'spread': 'spread between samples', 'relative_spread':
@@ -304,12 +337,15 @@ _STATISTIC_LABELS = {'n': 'samples per point', 'spread': 'spread between samples
 
 
 def plot_average_statistic(analysis, key_quant, statistic='standard_error', method=None, cbar_label=None, cmap='viridis',
-                           marker_size=15, vmin=0, vmax=None, mask=True, invert_y=False, output_path=None):
+                           marker_size=15, vmin=0, vmax=None, mask=True, invert_y=False, output_path=None, scalebar_um=None,
+                           group=None):
     """
     Map of how well an averaged map is known: the number of samples, the spread or the standard error at every point
     (see `brainfusion.fusion.core.average_statistic` for the definitions), for one clustering `method` of a fusion.
+    `group`: the statistic of one group of a fusion made with `group_field` (default: of all samples).
+    `scalebar_um`: draw an unlabelled scale bar of this many micrometres (see `scalebar_length`).
     """
-    grid, values = average_statistic(analysis, key_quant, method, statistic)
+    grid, values = average_statistic(analysis, key_quant, method, statistic, group)
     contour = analysis['template_contours'][0]
     if vmax is None and mask:   # the 99th percentile inside the outline: a few outliers outside it would stretch the scale
         inside = values[mask_contour(contour, grid) & np.isfinite(values)]
@@ -317,4 +353,5 @@ def plot_average_statistic(analysis, key_quant, statistic='standard_error', meth
     return plot_average_map_arrays(values, grid, contour,
                                    cbar_label=cbar_label or _STATISTIC_LABELS[statistic], cmap=cmap,
                                    marker_size=marker_size, vmin=vmin, vmax=vmax, mask=mask, invert_y=invert_y,
-                                   output_path=output_path)
+                                   output_path=output_path,
+                                   scalebar=None if scalebar_um is None else scalebar_length(analysis, scalebar_um))

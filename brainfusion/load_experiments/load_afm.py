@@ -5,13 +5,18 @@ import pandas as pd
 from PIL import Image
 from skimage.transform import AffineTransform
 
-from brainfusion.io import (attach_metadata, parse_name, read_annotation_file, mirror_pixels, annotation_mirror_flags,
-                            ANNOTATION_FILENAME)
+from brainfusion.fusion.outline_repeats import read_outline
+from brainfusion.io import attach_metadata, parse_name, mirror_pixels, annotation_mirror_flags
 from brainfusion.load_experiments.base import iter_experiment_folders
 from brainfusion.sample import Sample
 
 # The roi-annotator's file sits next to the image it was drawn on
 AFM_ANNOTATION_DIR = os.path.join('Pics', 'calibration')
+# Images in the pixels of 'overview.tif', on which an outline may be drawn: AFM_BatchMapping.m pastes the measurement
+# images of the run onto overview.tif at their x_image/y_image (same size, same pixels), so these show the brain as it
+# was during that run even where overview.tif was taken only once for several runs.
+AFM_SAME_FRAME_IMAGES = ('overview.tif', 'overview_MergedFromMeasurementImages.tif',
+                         'overview_MergedFromMeasurementImages_BCadjusted.tif')
 
 
 def load_batchforce_all(base_path, afm_variables, batchforce_filename='data.csv',
@@ -38,7 +43,7 @@ def load_batchforce_all(base_path, afm_variables, batchforce_filename='data.csv'
 
 def load_batchforce_single(folder_path, afm_variables, batchforce_filename='data.csv',
                            grid_conv_filename='GridInversionMatrix.csv', use_landmarks=True, apply_mirror=True,
-                           annotation_file=None) -> Sample:
+                           outline='outline_brainfusion.txt', outline_kwargs=None) -> Sample:
     """
     Load a single AFM experiment analysed with the Matlab 'batchforce' library, together with the outline (and
     landmarks) annotated with the roi-annotator.
@@ -51,10 +56,11 @@ def load_batchforce_single(folder_path, afm_variables, batchforce_filename='data
     quantity's `result_parameter` label instead, e.g. `{'modulus': 'Reduced apparent elastic modulus'}`. A per-point
     column of that table which is not a quantity (e.g. 'indent_depth') can be requested in the same way.
 
-    The annotation is 'Pics/calibration/outline_brainfusion.txt' of the experiment, or `annotation_file` if
-    given (e.g. the file of another run on the same sample with an identical 'overview.tif'); see
-    `brainfusion.io.read_annotation_file`. It must have been drawn on 'overview.tif', the image the data's
-    'x_image'/'y_image' refer to. Its (0-based) pixels are converted to the data's Matlab (1-based) pixels.
+    The annotation is `outline` in 'Pics/calibration' of the experiment (see `brainfusion.fusion.read_outline`): a
+    name ending in '.txt' is that single file, any other name a folder of repeated outlines (e.g. 'outline_repeats'),
+    averaged with the outline settings of `outline_kwargs` (the fusion kwargs). It must have been drawn on 'overview.tif', the image the data's
+    'x_image'/'y_image' refer to, or on one of the merged images in its pixels (AFM_SAME_FRAME_IMAGES). Its (0-based)
+    pixels are converted to the data's Matlab (1-based) pixels. The sample is in metres (metadata 'length_unit': 'm').
     With `apply_mirror`, the mirroring noted in its header (so that all brains look the same way) is applied
     to grid, outline, landmarks and background image. `use_landmarks=False` ignores the landmarks.
     """
@@ -105,14 +111,15 @@ def load_batchforce_single(folder_path, afm_variables, batchforce_filename='data
     bg_image = np.array(Image.open(os.path.join(calibration_dir, 'overview.tif')).convert('L'))
 
     # --- Annotation ---
-    annotation_file = annotation_file or os.path.join(calibration_dir, ANNOTATION_FILENAME)
-    annotation = read_annotation_file(annotation_file)
-    assert annotation is not None, f"No roi-annotator file with an outline at {annotation_file}"
-    assert annotation['outline'] is not None, f"No [outline] in {annotation_file}"
+    annotation = read_outline(calibration_dir, outline, outline_kwargs)
     annotated_image = annotation['header'].get('image', 'overview.tif')
-    assert annotated_image == 'overview.tif', (
-        f"{annotation_file}: the outline was drawn on '{annotated_image}', but the grid (x_image/y_image) is in "
-        f"pixels of 'overview.tif' - annotate on overview.tif")
+    assert annotated_image in AFM_SAME_FRAME_IMAGES, (
+        f"{annotation['path']}: the outline was drawn on '{annotated_image}', but the grid (x_image/y_image) is in "
+        f"pixels of 'overview.tif' - annotate on one of {AFM_SAME_FRAME_IMAGES}")
+    annotated_size = Image.open(os.path.join(calibration_dir, annotated_image)).size
+    assert annotated_size == bg_image.shape[1::-1], (
+        f"{annotation['path']}: '{annotated_image}' ({annotated_size}) is not the size of overview.tif "
+        f"({bg_image.shape[1::-1]}), so it is not in its pixels")
     contour = annotation['outline']
     landmarks = annotation['landmarks'] if use_landmarks else None
 
@@ -135,4 +142,4 @@ def load_batchforce_single(folder_path, afm_variables, batchforce_filename='data
         landmarks = to_um(landmarks + 1)
 
     return Sample(contour=contour, grid=afm_grid, dataset=afm_data, scale=afm_scale_matrix, landmarks=landmarks,
-                  filename=folder_name, bg_image=bg_image)
+                  filename=folder_name, bg_image=bg_image, metadata={'length_unit': 'm'})

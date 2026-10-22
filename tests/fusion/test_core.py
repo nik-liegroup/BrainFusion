@@ -195,6 +195,16 @@ class TestRunFusion:
         recomputed = run_fusion(samples_v2, {"contour_interp_n": 40}, results_path=results_path, overwrite=True)
         np.testing.assert_allclose(recomputed["measurement_interpolated_dataset"]["value"], 99.0)
 
+    def test_cache_made_with_other_outlines_is_refused(self, tmp_path):
+        results_path = str(tmp_path / "analysis.h5")
+        run_fusion([circle_sample(0, 0, 1, filename="a"), circle_sample(0.2, 0, 1.1, filename="b")],
+                   {"contour_interp_n": 40}, results_path=results_path)
+        redrawn = [circle_sample(0, 0, 1, filename="a"), circle_sample(0.2, 0, 1.3, filename="b")]
+        with pytest.raises(ValueError, match="other outlines"):
+            run_fusion(redrawn, {"contour_interp_n": 40}, results_path=results_path)
+        run_fusion(redrawn, {"contour_interp_n": 40}, results_path=results_path, overwrite=True)
+        run_fusion(redrawn, {"contour_interp_n": 40}, results_path=results_path)   # the new cache matches
+
 
 def varied_samples(n=4, n_grid=30):
     """Samples with different values (and different point counts per sample are not needed: same grid each)."""

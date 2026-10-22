@@ -16,7 +16,7 @@ from brainfusion.sample import Sample, replace
 
 def brain_fusion(samples: list[Sample], contour_template="average", contour_interp_n=200, clustering='Mean',
                  outline_averaging='star_domain', smooth='auto', curvature=0.5, fit_routine='ellipse',
-                 landmark_fit='similarity', group_field=None, max_gap=None, **kwargs) -> dict:
+                 landmark_fit='similarity', group_field=None, max_gap=None, canonical_axes=True, **kwargs) -> dict:
     """
     Align, deform and interpolate a list of samples onto a common template shape, then average them.
 
@@ -52,6 +52,10 @@ def brain_fusion(samples: list[Sample], contour_template="average", contour_inte
         translation) is the stable choice for round outlines and for landmarks on a line.
     fit_routine : str, default='ellipse'
         Initial affine contour alignment method: "ellipse" or "bbox".
+    canonical_axes : bool, default=True
+        With the ellipse fit: put the first outline's fitted ellipse with its major axis along y and its minor axis along x
+        (instead of keeping the orientation it happens to have) and match the others to it, so every fusion has the same
+        orientation (see `canonical_ellipse_trafos`).
     max_gap : float, optional
         Without it (None), every point of the shared averaging grid takes the value of the nearest measured point
         of each sample, however far away - the maps are filled in beyond where anything was measured. With it,
@@ -83,7 +87,7 @@ def brain_fusion(samples: list[Sample], contour_template="average", contour_inte
 
     template_sample, measurement_samples, template_contours = fuse_boundaries(
         contour_template, samples, contour_interp_n=contour_interp_n, outline_averaging=outline_averaging,
-        curvature=curvature, fit_routine=fit_routine, landmark_fit=landmark_fit)
+        curvature=curvature, fit_routine=fit_routine, landmark_fit=landmark_fit, canonical_axes=canonical_axes)
 
     # "GMM" clusters each sample's own warped points directly and builds its own grid from them, so it's the
     # only option that doesn't need samples pre-resampled onto one shared regular grid first.
@@ -153,25 +157,42 @@ def run_fusion(samples: list[Sample], fusion_kwargs: dict, results_path: str, ov
     """
     Run `brain_fusion` on `samples` and cache the result at `results_path`. If a cached result already
     exists and `overwrite` is False, it is loaded instead and its stored parameters are compared against
-    `fusion_kwargs`.
+    `fusion_kwargs`. The cache also stores a fingerprint of the samples' outlines: if they changed since (e.g. an
+    outline drawn again, or a repeat added to an averaged outline), loading the cache raises a ValueError - the cached
+    fusion was made with other outlines (caches written before the fingerprint existed are not checked).
     """
     template = fusion_kwargs.get('contour_template')
     stored = dict(fusion_kwargs)
     if isinstance(template, (Sample, np.ndarray)):   # stored as a fingerprint of the outline
         contour = template.contour if isinstance(template, Sample) else template
         stored['contour_template'] = 'given:' + hashlib.md5(np.round(np.asarray(contour, dtype=float), 6).tobytes()).hexdigest()
+    outlines = _fingerprint([s.contour for s in samples])
     if overwrite or not os.path.exists(results_path):
         analysis = brain_fusion(samples, **fusion_kwargs)
-        export_analysis(results_path, analysis, stored)
+        export_analysis(results_path, analysis, {**stored, 'input_outlines': outlines})
     else:
         analysis, loaded_kwargs = import_analysis(results_path)
-        check_parameters(stored, loaded_kwargs)
+        check_parameters(stored, {k: v for k, v in loaded_kwargs.items() if k != 'input_outlines'})
+        cached = loaded_kwargs.get('input_outlines')
+        if cached is not None and cached != outlines:
+            raise ValueError(f"{results_path} was made with other outlines than the ones loaded now (an outline was "
+                             f"drawn again or a repeat added/removed): recompute it (overwrite=True)")
 
     return analysis
 
 
+def _fingerprint(contours):
+    """md5 of the outlines (rounded relative to their size, so that it does not depend on the unit)."""
+    digest = hashlib.md5()
+    for contour in contours:
+        contour = np.asarray(contour, dtype=float)
+        size = float(np.ptp(contour, axis=0).max()) or 1.0
+        digest.update(np.round(contour / size, 6).tobytes())
+    return digest.hexdigest()
+
+
 def fuse_boundaries(template, samples: list[Sample], contour_interp_n=200, outline_averaging='star_domain',
-                    curvature=0.5, fit_routine='ellipse', landmark_fit='similarity'):
+                    curvature=0.5, fit_routine='ellipse', landmark_fit='similarity', canonical_axes=True):
     """
     Affinely align all sample contours to a common template, then refine the match with boundary DTW.
 
@@ -198,7 +219,7 @@ def fuse_boundaries(template, samples: list[Sample], contour_interp_n=200, outli
 
     aligned_contours, aligned_grids, affine_matrices = align_contours(
         contours_interp, [s.grid for s in samples], landmarks_list=[s.landmarks for s in samples],
-        template_index=template_index, fit_routine=fit_routine, landmark_fit=landmark_fit)
+        template_index=template_index, fit_routine=fit_routine, landmark_fit=landmark_fit, canonical_axes=canonical_axes)
 
     aligned_samples = [replace(sample, contour=contour, grid=grid, affine=affine)
                       for sample, contour, grid, affine in zip(samples, aligned_contours, aligned_grids,
@@ -225,7 +246,7 @@ def fuse_boundaries(template, samples: list[Sample], contour_interp_n=200, outli
 
 
 def average_outline(samples: list[Sample], outline_averaging='median', contour_interp_n=200, fit_routine='ellipse',
-                    landmark_fit='similarity') -> Sample:
+                    landmark_fit='similarity', canonical_axes=True) -> Sample:
     """
     The average outline of `samples` as a template `Sample` (no data, no landmarks), for `brain_fusion(contour_template=...)`.
     The outlines are aligned to the first sample as in a fusion with `contour_template="average"` and averaged; fusions
@@ -233,7 +254,8 @@ def average_outline(samples: list[Sample], outline_averaging='median', contour_i
     """
     contours = [interpolate_contour(_close_contour(s.contour), contour_interp_n) for s in samples]
     aligned, _, _ = align_contours(contours, [s.grid for s in samples], landmarks_list=[s.landmarks for s in samples],
-                                   template_index=0, fit_routine=fit_routine, landmark_fit=landmark_fit)
+                                   template_index=0, fit_routine=fit_routine, landmark_fit=landmark_fit,
+                                   canonical_axes=canonical_axes)
     contour, _ = find_average_contour(aligned, average=outline_averaging, star_bins=contour_interp_n, error_metric='frechet')
     return Sample(contour=contour, filename='template_average')
 

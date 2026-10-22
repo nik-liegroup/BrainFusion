@@ -84,7 +84,32 @@ class TestLoadBatchforceSingle:
         folder = make_afm_folder(tmp_path / "a", annotate=False)
         other = make_afm_folder(tmp_path / "b")
         sample = load_batchforce_single(str(folder), afm_variables=["modulus"],
-                                        annotation_file=str(other / "Pics" / "calibration" / "outline_brainfusion.txt"))
+                                        outline=str(other / "Pics" / "calibration" / "outline_brainfusion.txt"))
+        assert sample.contour.shape == (4, 2)
+
+    def test_a_name_without_txt_is_a_folder_of_repeats_averaged(self, tmp_path):
+        folder = make_afm_folder(tmp_path)
+        calibration = folder / "Pics" / "calibration"
+        repeats = calibration / "outline_repeats"
+        repeats.mkdir()
+        text = (calibration / "outline_brainfusion.txt").read_text()
+        for n in (1, 2):
+            (repeats / f"outline_brainfusion_repeat{n}.txt").write_text(text)
+        single = load_batchforce_single(str(folder), afm_variables=["modulus"])
+        averaged = load_batchforce_single(str(folder), afm_variables=["modulus"], outline="outline_repeats",
+                                          outline_kwargs={"contour_interp_n": 40, "outline_averaging": "median"})
+        assert averaged.contour.shape == (39, 2)
+        np.testing.assert_allclose(averaged.contour.min(axis=0), single.contour.min(axis=0), atol=1e-9)
+        np.testing.assert_allclose(averaged.contour.max(axis=0), single.contour.max(axis=0), atol=1e-9)
+        with pytest.raises(FileNotFoundError, match="repeated outlines"):
+            load_batchforce_single(str(folder), afm_variables=["modulus"], outline="outline_repeats_missing")
+
+    def test_a_folder_with_one_outline_gives_that_outline(self, tmp_path):
+        folder = make_afm_folder(tmp_path)
+        calibration = folder / "Pics" / "calibration"
+        (calibration / "outline_repeats").mkdir()
+        (calibration / "outline_brainfusion.txt").rename(calibration / "outline_repeats" / "outline_brainfusion_repeat1.txt")
+        sample = load_batchforce_single(str(folder), afm_variables=["modulus"], outline="outline_repeats")
         assert sample.contour.shape == (4, 2)
 
     def test_annotation_on_another_image_than_overview_is_refused(self, tmp_path):
@@ -94,7 +119,7 @@ class TestLoadBatchforceSingle:
 
     def test_missing_annotation_raises(self, tmp_path):
         folder = make_afm_folder(tmp_path, annotate=False)
-        with pytest.raises(AssertionError, match="No roi-annotator file"):
+        with pytest.raises(FileNotFoundError, match="No roi-annotator file"):
             load_batchforce_single(str(folder), afm_variables=["modulus"])
 
     def test_missing_data_file_raises(self, tmp_path):
@@ -127,4 +152,4 @@ class TestLoadBatchforceAll:
         samples = load_batchforce_all(str(tmp_path), afm_variables=["modulus"],
                                       name_pattern=r"#(?P<animal_number>\d+)_Stage(?P<stage>\d+)",
                                       name_converters={"animal_number": int, "stage": int})
-        assert samples[0].metadata == {"animal_number": 3, "stage": 37}
+        assert samples[0].metadata == {"length_unit": "m", "animal_number": 3, "stage": 37}
