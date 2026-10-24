@@ -3,11 +3,33 @@ import scipy.ndimage as ndi
 from typing import Tuple
 from collections import defaultdict
 
+# The matching does not depend on the unit of the outlines: they are put into units in which a circle of their length has radius 1
+# (`segmented_contour_dtw`), `dtw_curvature` is the weight of the curvature against the distance, and a stretch is flat if its curvature is
+# below FLAT_THRESH times the mean curvature of the outline. (Before, a squared length was added to a length, the curvature was
+# regularised with a fixed 1e-10 and a fixed curvature of 0.001 per unit length marked a flat stretch: AFM outlines in metres were
+# matched by their curvature almost alone, Brillouin outlines in micrometres by their distance alone.)
+DTW_CURVATURE = 0.3   # tested on 31 AFM and 17 Brillouin outlines: 0.3 gives the least folds in the warp with moderate offsets
+FLAT_THRESH = 0.15
+
 
 def segmented_contour_dtw(contour1: np.ndarray, contour2: np.ndarray,
-                          dtw_curvature: float = 0.5, smoothing: float = 0.05,
-                          flat_thresh: float = 0.001, chord_arc_thresh: float = 0.99,
+                          dtw_curvature: float = DTW_CURVATURE, smoothing: float = 0.05,
+                          flat_thresh: float = FLAT_THRESH, chord_arc_thresh: float = 0.99,
                           min_frac: float = 0.05, ) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    `_segmented_contour_dtw` of two outlines put into units of their own size (a circle as long as the outlines has radius 1), so the
+    result is the same in metres and in micrometres; `flat_thresh` is a curvature in units of the mean curvature.
+    """
+    contour1, contour2 = np.asarray(contour1, dtype=float), np.asarray(contour2, dtype=float)
+    length = sum(np.sum(np.linalg.norm(np.diff(c, axis=0), axis=1)) for c in (contour1, contour2))
+    unit = length / (4 * np.pi)   # the radius of a circle as long as the outlines
+    out1, out2 = _segmented_contour_dtw(contour1 / unit, contour2 / unit, dtw_curvature, smoothing, flat_thresh, chord_arc_thresh, min_frac)
+    return out1 * unit, out2 * unit
+
+
+def _segmented_contour_dtw(contour1: np.ndarray, contour2: np.ndarray,
+                           dtw_curvature: float, smoothing: float, flat_thresh: float, chord_arc_thresh: float,
+                           min_frac: float) -> Tuple[np.ndarray, np.ndarray]:
     """
     Perform piecewise alignment of two closed 2D contours using straight segments as cut points.
 
@@ -56,12 +78,11 @@ def segmented_contour_dtw(contour1: np.ndarray, contour2: np.ndarray,
         contour2, curv2, flat_thresh=flat_thresh, min_frac=min_frac, chord_arc_thresh=chord_arc_thresh
     )
 
-    # Cut points from segment starts and ends
-    cuts1 = sorted({p for s in seg_info1 if s["straight"] for p in (s["start"], s["end"])})
-    cuts2 = sorted({p for s in seg_info2 if s["straight"] for p in (s["start"], s["end"])})
+    # Cut points: the ends of straight stretches that both outlines have at the same place
+    cuts1, cuts2 = _paired_cuts(contour1, contour2, seg_info1, seg_info2, seg_indices)
 
     # --- If not enough segments, fall back to DTW ---
-    num_segs = min(len(cuts1), len(cuts2))
+    num_segs = len(cuts1)
     if num_segs < 2:
         return dtw_with_curvature_penalty(contour1, contour2, curv1, curv2, dtw_curvature)
 
@@ -94,6 +115,41 @@ def segmented_contour_dtw(contour1: np.ndarray, contour2: np.ndarray,
         out2.append(seg_out2)
 
     return np.vstack(out1), np.vstack(out2)
+
+
+MAX_STRAIGHT_OFFSET = 0.3   # straight stretches of two outlines correspond if their middles are closer than this (units: radius of a circle as long as the outlines)
+
+
+def _paired_cuts(contour1, contour2, seg_info1, seg_info2, seg_indices):
+    """
+    The cut points (indices into contour1 and contour2, in the same order) at the ends of the straight stretches the two outlines
+    have in common: a stretch of one outline is paired with the stretch of the other whose middle is nearest if that is also the
+    nearest the other way round and closer than MAX_STRAIGHT_OFFSET, and the pairs must keep their order around the outlines.
+    (Pairing the n-th stretch of one outline with the n-th of the other matched different parts when the outlines had different numbers
+    of straight stretches.) Returns two empty lists if there is no consistent pairing.
+    """
+    straight1 = [s for s in seg_info1 if s["straight"]]
+    straight2 = [s for s in seg_info2 if s["straight"]]
+    if not straight1 or not straight2:
+        return [], []
+
+    def middle(contour, s):
+        idx = seg_indices(s["start"], s["end"], len(contour))
+        return contour[idx[len(idx) // 2]]
+
+    mid1 = np.array([middle(contour1, s) for s in straight1])
+    mid2 = np.array([middle(contour2, s) for s in straight2])
+    distance = np.linalg.norm(mid1[:, None, :] - mid2[None, :, :], axis=2)
+    pairs = [(i, int(np.argmin(distance[i]))) for i in range(len(straight1))]
+    pairs = [(i, j) for i, j in pairs if int(np.argmin(distance[:, j])) == i and distance[i, j] < MAX_STRAIGHT_OFFSET]
+    if not pairs:
+        return [], []
+    cuts = sorted((straight1[i][end], straight2[j][end]) for i, j in pairs for end in ("start", "end"))
+    cuts1, cuts2 = [c[0] for c in cuts], [c[1] for c in cuts]
+    descents = sum(cuts2[k] > cuts2[(k + 1) % len(cuts2)] for k in range(len(cuts2)))
+    if len(set(cuts1)) < len(cuts1) or len(set(cuts2)) < len(cuts2) or descents != 1:
+        return [], []
+    return cuts1, cuts2
 
 
 def detect_linear_segments_from_curvature(contour, curvature,
@@ -145,7 +201,7 @@ def detect_linear_segments_from_curvature(contour, curvature,
 
 def dtw_with_curvature_penalty(contour1: np.ndarray, contour2: np.ndarray,
                                curvatures1: np.ndarray, curvatures2: np.ndarray,
-                               dtw_curvature: float = 0.5) -> Tuple[np.ndarray, np.ndarray]:
+                               dtw_curvature: float = DTW_CURVATURE) -> Tuple[np.ndarray, np.ndarray]:
     """
     Align two 2D contours using Dynamic Time Warping (DTW) with a curvature-based penalty.
 
@@ -185,22 +241,11 @@ def dtw_with_curvature_penalty(contour1: np.ndarray, contour2: np.ndarray,
     if not isinstance(curvatures2, np.ndarray) or curvatures2.ndim != 1 or curvatures2.shape[0] != len(contour2):
         raise ValueError(f"curvature2 must be a ({len(contour2)},) numpy array")
 
-    # Normalize curvature penalty factor dynamically
+    # Cost matrix: squared distance of the points and weighted curvature difference, each relative to its median over all pairs
     n, m = len(contour1), len(contour2)
-    spatial_dists = [np.linalg.norm(contour1[i] - contour2[j]) for i in range(n) for j in range(m)]
-    curvature_diffs = [np.abs(curvatures1[i] - curvatures2[j]) for i in range(n) for j in range(m)]
-
-    median_spatial = np.median(spatial_dists)
-    median_curvature = np.median(curvature_diffs)
-
-    lambda_curvature = dtw_curvature * (median_spatial / (median_curvature + 1e-11))
-
-    def cost_function(i, j):
-        """Cost function incorporating spatial distance and CSS-based curvature penalty."""
-        p1, p2 = contour1[i], contour2[j]
-        spatial_dist = np.linalg.norm(p1 - p2)
-        curvature_penalty = lambda_curvature * np.abs(curvatures1[i] - curvatures2[j])
-        return spatial_dist ** 2 + curvature_penalty
+    spatial = np.linalg.norm(contour1[:, None, :] - contour2[None, :, :], axis=2)
+    curvature_diff = np.abs(curvatures1[:, None] - curvatures2[None, :])
+    cost_matrix = (spatial / (np.median(spatial) + 1e-300)) ** 2 + dtw_curvature * curvature_diff / (np.median(curvature_diff) + 1e-11)
 
     # Initialize DP matrix
     dtw_matrix = np.full((n + 1, m + 1), np.inf)
@@ -209,7 +254,7 @@ def dtw_with_curvature_penalty(contour1: np.ndarray, contour2: np.ndarray,
     # Compute DTW
     for i in range(1, n + 1):
         for j in range(1, m + 1):
-            cost = cost_function(i - 1, j - 1)
+            cost = cost_matrix[i - 1, j - 1]
             dtw_matrix[i, j] = cost + min(dtw_matrix[i - 1, j],  # Insertion
                                           dtw_matrix[i, j - 1],  # Deletion
                                           dtw_matrix[i - 1, j - 1])  # Match

@@ -2,6 +2,14 @@ import numpy as np
 import matplotlib.path as mpath
 
 
+def closed_xy(contour):
+    """(x, y) of an outline with its first point repeated at the end, so that `plot` draws it closed."""
+    contour = np.asarray(contour, dtype=float)
+    if len(contour) and not np.array_equal(contour[0], contour[-1]):
+        contour = np.vstack([contour, contour[:1]])
+    return contour[:, 0], contour[:, 1]
+
+
 def mask_contour(contour: np.ndarray, grid: np.ndarray) -> np.ndarray:
     """
     Create a boolean mask indicating which points in `grid` lie inside the polygon defined by `contour` (inclusive).

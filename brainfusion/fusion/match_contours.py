@@ -3,7 +3,7 @@ import cv2
 from scipy.interpolate import interp1d
 from skimage.transform import AffineTransform, estimate_transform
 from typing import List, Tuple
-from brainfusion.fusion.dtw import segmented_contour_dtw
+from brainfusion.fusion.dtw import DTW_CURVATURE, segmented_contour_dtw
 
 
 def interpolate_contour(contour: np.ndarray, num_points: int) -> np.ndarray:
@@ -392,7 +392,7 @@ def get_contour_orientation(contour: np.ndarray) -> str:
     return 'clockwise' if signed_area < 0 else 'counterclockwise'
 
 
-def boundary_match_contours(contours: List[np.ndarray], template_index: int = 0, curvature: float = 0.5) -> (
+def boundary_match_contours(contours: List[np.ndarray], template_index: int = 0, curvature: float = DTW_CURVATURE) -> (
         Tuple)[List[np.ndarray], List[np.ndarray]]:
     """
     Align a list of contours to a reference template using dynamic time warping (DTW) with a curvature-based penalty.
@@ -404,7 +404,7 @@ def boundary_match_contours(contours: List[np.ndarray], template_index: int = 0,
     template_index : int
         Index of the template contour to which others will be aligned.
     curvature : float
-        Weight of the curvature penalty in DTW.
+        Weight of the curvature mismatch against the distance in DTW (dtw.DTW_CURVATURE = 0.3; independent of the unit of the contours).
 
     Returns
     -------

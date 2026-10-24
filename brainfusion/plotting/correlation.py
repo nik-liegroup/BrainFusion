@@ -6,6 +6,7 @@ import matplotlib.colors as mcolors
 import matplotlib.patches as patches
 from scipy import stats
 
+from brainfusion.utils import closed_xy
 from .maps import render_data_on_contour, draw_scalebar
 
 
@@ -19,7 +20,7 @@ def format_p_value(p):
 
 
 def plot_norm_corr(map1, map2, pearson=None, p_value=None, label1="X-axis", label2="Y-axis", output_path=None,
-                   spearman=None, n_points=None, fit_line=True, note=None, figsize=(3.6, 3.4)):
+                   spearman=None, n_points=None, fit_line=True, note=None, figsize=(3.6, 3.4), ax=None):
     """
     Scatter of two maps' values at the same points, in the units of the data (put them in the labels, e.g.
     "AFM modulus (Pa)"), with a least-squares line and its 95 % confidence band, and the correlation numbers given.
@@ -27,7 +28,8 @@ def plot_norm_corr(map1, map2, pearson=None, p_value=None, label1="X-axis", labe
 
     `pearson`, `spearman`, `p_value` are printed if given (see `correlate_on_shared_grid`); `p_value` belongs to the
     Pearson r. The numbers sit in the lower right corner, which is empty for a positive relation. `n_points` defaults to the number of values. `note`: one more line of text under the numbers, e.g. why
-    there is no p-value. If `output_path` is given, saves the figure there (dpi=300, tight bbox) and closes it.
+    there is no p-value. If `output_path` is given, saves the figure there (dpi=300, tight bbox) and closes it. `ax`: draw into this axes
+    instead of a figure of its own (then nothing is laid out or saved).
     """
     map1, map2 = np.asarray(map1, dtype=float), np.asarray(map2, dtype=float)
     if map1.shape != map2.shape:
@@ -36,7 +38,8 @@ def plot_norm_corr(map1, map2, pearson=None, p_value=None, label1="X-axis", labe
 
     with plt.rc_context({'font.size': 7, 'axes.labelsize': 7, 'axes.linewidth': 0.6, 'xtick.major.width': 0.6,
                          'ytick.major.width': 0.6, 'xtick.major.size': 2.5, 'ytick.major.size': 2.5}):
-        fig, ax = plt.subplots(figsize=figsize)
+        own_figure = ax is None
+        fig, ax = plt.subplots(figsize=figsize) if own_figure else (ax.figure, ax)
         ax.scatter(map1, map2, s=7, color='#1f4e79', alpha=0.55, linewidths=0, rasterized=True, zorder=2)
 
         if fit_line and map1.size > 2 and np.ptp(map1) > 0:
@@ -65,9 +68,10 @@ def plot_norm_corr(map1, map2, pearson=None, p_value=None, label1="X-axis", labe
         ax.set_xlabel(label1)
         ax.set_ylabel(label2)
         ax.spines[['top', 'right']].set_visible(False)
-        fig.tight_layout(pad=0.6)
+        if own_figure:
+            fig.tight_layout(pad=0.6)
 
-        if output_path:
+        if output_path and own_figure:
             fig.savefig(output_path, dpi=300, bbox_inches='tight')
             plt.close(fig)
 
@@ -88,7 +92,7 @@ def plot_correlation_with_radii(reference_grid, other_grid, contour, radii, data
     fig.colorbar(sc_b, ax=ax, orientation='vertical', label=label_b, shrink=0.6)
     sc_a = ax.scatter(reference_grid[:, 0], reference_grid[:, 1], c=data_a, s=15, cmap='hot')
     fig.colorbar(sc_a, ax=ax, orientation='vertical', label=label_a, shrink=0.6)
-    ax.plot(contour[:, 0], contour[:, 1], 'k-', linewidth=2, label="Contour")
+    ax.plot(*closed_xy(contour), 'k-', linewidth=2, label="Contour")
 
     for i, point in enumerate(reference_grid):
         ax.add_patch(patches.Circle(point, radii[i], color='blue', alpha=0.2))
@@ -97,6 +101,7 @@ def plot_correlation_with_radii(reference_grid, other_grid, contour, radii, data
     ax.set_yticks([])
     ax.set_title(title, fontsize=18)
     ax.set_aspect('equal')
+    ax.spines[['left', 'bottom']].set_visible(False)   # the map has no frame
     ax.legend()
 
     if isinstance(results_folder, str):
@@ -109,24 +114,28 @@ def plot_correlation_with_radii(reference_grid, other_grid, contour, radii, data
 
 def plot_correlation_masks(grid, data_a, data_b, contour, label_a="A", label_b="B", results_folder=None,
                            results_name="correlation_masks", cmap_a="hot", cmap_b="hot", cbar_label_a="", cbar_label_b="",
-                           scalebar=None):
+                           scalebar=None, range_a=None, range_b=None, ticks_a=None, ticks_b=None):
     """Plot two datasets living on the same grid side by side (e.g. two groups from `pairwise_correlate_groups`).
     Supports boolean or numeric data. A regular grid is drawn as cells that touch (see `render_data_on_contour`).
-    `scalebar`: length of an unlabelled scale bar in both panels, in the units of `grid` (see `scalebar_length`)."""
+    `scalebar`: length of an unlabelled scale bar in both panels, in the units of `grid` (see `scalebar_length`).
+    `range_a`, `range_b`: (low, high) colour scale of each panel (default: the data's range); `ticks_a`, `ticks_b`: the colourbar's tick values."""
     fig, axs = plt.subplots(1, 2, figsize=(16, 8))
 
     bool_cmap = mcolors.ListedColormap(['black', 'red'])
-    for ax, data, label, cmap, cbar_label in ((axs[0], data_a, label_a, cmap_a, cbar_label_a),
-                                              (axs[1], data_b, label_b, cmap_b, cbar_label_b)):
+    for ax, data, label, cmap, cbar_label, value_range, ticks in ((axs[0], data_a, label_a, cmap_a, cbar_label_a, range_a, ticks_a),
+                                                                  (axs[1], data_b, label_b, cmap_b, cbar_label_b, range_b, ticks_b)):
         is_bool = data.dtype == bool or np.array_equal(data, data.astype(bool))
         if is_bool:
             render_data_on_contour(ax, data.astype(float), grid, contour, cmap=bool_cmap, vmin=0, vmax=1, mask=False)
         else:
-            cells = render_data_on_contour(ax, np.asarray(data, dtype=float), grid, contour, cmap=cmap, mask=False)
-            fig.colorbar(cells, ax=ax, orientation='vertical', label=cbar_label)
-        ax.plot(contour[:, 0], contour[:, 1], 'k-', linewidth=2, label="Contour")
+            low, high = value_range if value_range is not None else (None, None)
+            cells = render_data_on_contour(ax, np.asarray(data, dtype=float), grid, contour, cmap=cmap, vmin=low, vmax=high, mask=False)
+            cbar = fig.colorbar(cells, ax=ax, orientation='vertical', label=cbar_label, ticks=ticks)
+            cbar.outline.set_linewidth(1.5)   # black border
+        ax.plot(*closed_xy(contour), color='k', linewidth=3.5, linestyle=(0, (1.0, 2.2)), dash_capstyle='round', label="Contour")   # thick dashes with round ends
         ax.set_title(label)
         ax.set_aspect('equal')
+        ax.spines[['left', 'bottom']].set_visible(False)   # the map has no frame
         ax.set_xticks([])
         ax.set_yticks([])
         if scalebar:

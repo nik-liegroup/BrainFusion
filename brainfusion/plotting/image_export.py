@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from tifffile import imwrite
 
-from brainfusion.utils import mask_contour
+from brainfusion.utils import closed_xy, mask_contour
 
 
 def render_contour_on_image(img, grid, contour, cmap='grey', mask=False, invert_y=False):
@@ -29,7 +29,7 @@ def render_contour_on_image(img, grid, contour, cmap='grey', mask=False, invert_
 
     fig, ax = plt.subplots()
     ax.imshow(img, extent=extent, origin='lower' if invert_y else 'upper', cmap=cmap)
-    ax.plot(contour[:, 0], contour[:, 1], 'b--', linewidth=2)
+    ax.plot(*closed_xy(contour), 'b--', linewidth=2)
     ax.set_aspect('equal')
     ax.set_xticks([])
     ax.set_yticks([])

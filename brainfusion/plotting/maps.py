@@ -1,12 +1,13 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.collections import PatchCollection
-from matplotlib.patches import Rectangle
+from matplotlib.patches import Polygon, Rectangle
 
 from brainfusion.fusion.core import average_statistic
 from brainfusion.fusion.grouping import group_average_entry
 from brainfusion.fusion.interpolation import typical_spacing
-from brainfusion.utils import mask_contour
+from brainfusion.utils import closed_xy, mask_contour
+from .map_style import decorate_map, map_canvas, save_map
 
 
 def _regular_grid_pitches(grid, tolerance=0.1, min_fraction=0.95):
@@ -85,6 +86,8 @@ def render_data_on_contour(ax, data, grid, contour, cmap='afmhot', vmin=None, vm
         squares.set_clim(vmin, vmax)
         squares.set_edgecolor('face')
         ax.add_collection(squares)
+        if mask:   # the cells that reach over the outline are cut at it
+            squares.set_clip_path(Polygon(contour, closed=True, transform=ax.transData))
         ax.autoscale_view()
         return squares
     auto = isinstance(marker_size, str)
@@ -94,6 +97,8 @@ def render_data_on_contour(ax, data, grid, contour, cmap='afmhot', vmin=None, vm
                          cmap=cmap, s=15 if auto else marker_size, marker=marker, vmin=vmin, vmax=vmax)
     if auto:
         scatter._marker_spacing = typical_spacing(grid[inside])
+    if mask:
+        scatter.set_clip_path(Polygon(contour, closed=True, transform=ax.transData))
     return scatter
 
 
@@ -119,10 +124,10 @@ def plot_contours(template_contour, matched_contours, invert_y=False):
     for i, contour in enumerate(matched_contours):
         label = 'DTW Matched Contours' if i == 0 else None
         point_label = 'Initial Coordinate' if i == 0 else None
-        ax.plot(contour[:, 0], contour[:, 1], color='grey', linestyle='-', linewidth=1.5, alpha=0.5, label=label)
+        ax.plot(*closed_xy(contour), color='grey', linestyle='-', linewidth=1.5, alpha=0.5, label=label)
         ax.scatter(contour[0, 0], contour[0, 1], color='grey', s=25, label=point_label)
 
-    ax.plot(template_contour[:, 0], template_contour[:, 1], color='blue', linestyle='--', linewidth=3,
+    ax.plot(*closed_xy(template_contour), color='blue', linestyle='--', linewidth=3,
             label='Template Contour')
     ax.scatter(template_contour[0, 0], template_contour[0, 1], color='blue', s=30, zorder=6,
               label='Initial Tmp. Coordinate')
@@ -145,14 +150,16 @@ def plot_aligned_outlines(analysis, invert_y=False, output_path=None):
     Works on an `analysis` from `run_fusion`/`brain_fusion` or one re-loaded from its .h5 file. If `output_path` is given,
     saves the figure there (dpi=300, tight bbox) and closes it.
     """
-    template = np.asarray(analysis['template_contours'][0])
+    # the template itself (fusions of older versions: the template matched to the first sample, which follows that sample's match)
+    template = np.asarray(analysis['template_outline'] if 'template_outline' in analysis else analysis['template_contours'][0])
     contours = [np.asarray(c) for c in analysis['measurement_contours']]
     fig, ax = plt.subplots(figsize=(8, 8))
     for i, contour in enumerate(contours):
-        ax.plot(contour[:, 0], contour[:, 1], color='grey', lw=1, alpha=0.5,
+        ax.plot(*closed_xy(contour), color='grey', lw=1, alpha=0.5,
                 label=f'aligned outline of each sample ({len(contours)})' if i == 0 else None)
-    ax.plot(template[:, 0], template[:, 1], color='blue', ls='--', lw=3, label='average outline (template)')
+    ax.plot(*closed_xy(template), color='blue', ls='--', lw=3, label='average outline (template)')
     ax.set_aspect('equal')
+    ax.spines[['left', 'bottom']].set_visible(False)   # the map has no frame
     ax.set_xticks([])
     ax.set_yticks([])
     ax.legend(loc='upper right', fontsize=9, frameon=False)
@@ -181,22 +188,22 @@ def plot_transformed_grid(contour, template_contour, data, grid, trafo_grid, key
 
     fig, axes = plt.subplots(1, 3, figsize=(25, 7))
 
-    axes[0].plot(contour[:, 0], contour[:, 1], c='grey', linestyle='-')
+    axes[0].plot(*closed_xy(contour), c='grey', linestyle='-')
     axes[0].scatter(contour[:, 0], contour[:, 1], c='k', s=5)
-    axes[0].plot(template_contour[:, 0], template_contour[:, 1], color='blue', linestyle='-')
+    axes[0].plot(*closed_xy(template_contour), color='blue', linestyle='-')
     axes[0].scatter(template_contour[:, 0], template_contour[:, 1], c='b', s=5)
     axes[0].quiver(contour[:, 0], contour[:, 1], template_contour[:, 0] - contour[:, 0],
                    template_contour[:, 1] - contour[:, 1], angles='xy', scale_units='xy', scale=1, color='r',
                    alpha=0.8, zorder=3)
     axes[0].set_title('DTW with Curvature Penalty', fontsize=20)
 
-    axes[1].plot(contour[:, 0], contour[:, 1], color='grey', linestyle='-', linewidth=3, label='Original Contour',
+    axes[1].plot(*closed_xy(contour), color='grey', linestyle='-', linewidth=3, label='Original Contour',
                 alpha=0.75)
     render_data_on_contour(axes[1], data[key_quant], grid, contour, cmap=cmap, vmin=vmin, vmax=vmax,
                            marker_size=marker_size, mask=mask, invert_y=invert_y)
     axes[1].set_title('Original Data Map', fontsize=20)
 
-    axes[2].plot(template_contour[:, 0], template_contour[:, 1], color='blue', linestyle='-', linewidth=4,
+    axes[2].plot(*closed_xy(template_contour), color='blue', linestyle='-', linewidth=4,
                 label='Template Contour', alpha=0.75)
     trafo_map = render_data_on_contour(axes[2], trafo_data[key_quant], trafo_grid, template_contour, cmap=cmap,
                                        vmin=vmin, vmax=vmax, marker_size=marker_size, mask=mask, invert_y=invert_y)
@@ -211,6 +218,7 @@ def plot_transformed_grid(contour, template_contour, data, grid, trafo_grid, key
         ax.set_xlim(x_lim)
         ax.set_ylim(y_lim)
         ax.set_aspect('equal')
+        ax.spines[['left', 'bottom']].set_visible(False)   # the map has no frame
         ax.set_xticks([])
         ax.set_yticks([])
         if invert_y and grid.ndim != 3:  # image panels already flip via `origin='lower'`
@@ -248,56 +256,45 @@ def draw_scalebar(ax, length, color='black', linewidth=3, margin=0.06):
 
 
 def plot_average_map_arrays(data_avg, grid_avg, template_contour, cbar_label='', cmap='viridis', marker_size=15,
-                            vmin=None, vmax=None, mask=True, invert_y=False, output_path=None, scalebar=None):
+                            vmin=None, vmax=None, mask=True, invert_y=False, output_path=None, scalebar=None, ticks=None, title=None):
     """
     Plot one fused/averaged data map over the template contour, from plain arrays - e.g. a derived map you
     computed yourself (a difference map, a percentile mask, ...) that has no corresponding `analysis` dict
     to pull it back out of. For plotting straight from a `run_fusion`/`brain_fusion` result instead, use
     `plot_average_map`, which wraps this.
 
-    `scalebar`: the length of a scale bar in the units of `grid_avg` (no label is written; `scalebar_length` converts
-    micrometres for a fusion).
+    The figure has the look of `map_canvas` (fixed size, dotted black outline, scale bar close to the sample, colourbar with a black
+    border, transparent svg next to the png), so all maps can be placed at one scale in a paper figure.
 
-    If `output_path` is given, saves the figure there (dpi=300, tight bbox) and closes it - the figure is
+    `scalebar`: the length of a scale bar in the units of `grid_avg` (no label is written; `scalebar_length` converts
+    micrometres for a fusion). `ticks`: the colourbar's ticks (default: round numbers inside the range). `title`: a title above the brain (bold, see map_style.add_title),
+    saved at `output_path` instead of the untitled map.
+
+    If `output_path` is given, saves the figure there (png, 600 dpi, and the svg beside it) and closes it - the figure is
     still returned, but by then it's already closed, so treat that as "saved, not for further use".
     """
     data_avg = np.asarray(data_avg, dtype=float)
     vmin = np.nanmin(data_avg) if vmin is None else vmin
     vmax = np.nanmax(data_avg) if vmax is None else vmax
 
-    fig, ax = plt.subplots(figsize=(8, 8))
-    ax.plot(template_contour[:, 0], template_contour[:, 1], 'b--', linewidth=5, label='Template Contour')
-
+    fig, ax = map_canvas(template_contour, invert_y=invert_y)
     heatmap = render_data_on_contour(ax, data_avg, grid_avg, template_contour, cmap=cmap, vmin=vmin, vmax=vmax,
                                      marker_size=marker_size, mask=mask, invert_y=invert_y, marker='s')
-
-    cbar = fig.colorbar(heatmap, ax=ax)
-    cbar.ax.tick_params(labelsize=15)
-    cbar.set_label(cbar_label, size=20)
-
-    x_lim, y_lim = get_zoom_limits(template_contour)
-    ax.set_xlim(x_lim)
-    ax.set_ylim(y_lim)
-    ax.set_aspect('equal')
-    ax.set_xticks([])
-    ax.set_yticks([])
-    if invert_y and grid_avg.ndim != 3:
-        ax.invert_yaxis()
-    if scalebar:
-        draw_scalebar(ax, scalebar)
-
-    plt.tight_layout()
+    ax.set_xlim(template_contour[:, 0].min(), template_contour[:, 0].max())
+    ax.set_ylim((template_contour[:, 1].max(), template_contour[:, 1].min()) if invert_y
+                else (template_contour[:, 1].min(), template_contour[:, 1].max()))
+    decorate_map(fig, ax, template_contour, heatmap, vmin, vmax, cbar_label, ticks, scalebar)
     fit_markers_to_spacing(ax)
 
     if output_path:
-        fig.savefig(output_path, dpi=300, bbox_inches='tight')
+        save_map(fig, output_path, title=title)
         plt.close(fig)
 
     return fig
 
 
 def plot_average_map(analysis, key_quant, group=None, cbar_label='', cmap='viridis', marker_size=15, vmin=None,
-                     vmax=None, mask=True, invert_y=False, output_path=None, method=None, scalebar_um=None):
+                     vmax=None, mask=True, invert_y=False, output_path=None, method=None, scalebar_um=None, ticks=None, title=None):
     """
     Plot one averaged map straight from a `run_fusion`/`brain_fusion` result - a thin wrapper around
     `plot_average_map_arrays` that pulls the right grid/contour/data out of `analysis` first, so you don't
@@ -327,7 +324,7 @@ def plot_average_map(analysis, key_quant, group=None, cbar_label='', cmap='virid
 
     return plot_average_map_arrays(data, grid, template_contour, cbar_label=cbar_label, cmap=cmap,
                                    marker_size=marker_size, vmin=vmin, vmax=vmax, mask=mask, invert_y=invert_y,
-                                   output_path=output_path,
+                                   output_path=output_path, ticks=ticks, title=title,
                                    scalebar=None if scalebar_um is None else scalebar_length(analysis, scalebar_um))
 
 
@@ -338,7 +335,7 @@ _STATISTIC_LABELS = {'n': 'samples per point', 'spread': 'spread between samples
 
 def plot_average_statistic(analysis, key_quant, statistic='standard_error', method=None, cbar_label=None, cmap='viridis',
                            marker_size=15, vmin=0, vmax=None, mask=True, invert_y=False, output_path=None, scalebar_um=None,
-                           group=None):
+                           group=None, ticks=None):
     """
     Map of how well an averaged map is known: the number of samples, the spread or the standard error at every point
     (see `brainfusion.fusion.core.average_statistic` for the definitions), for one clustering `method` of a fusion.
@@ -353,5 +350,5 @@ def plot_average_statistic(analysis, key_quant, statistic='standard_error', meth
     return plot_average_map_arrays(values, grid, contour,
                                    cbar_label=cbar_label or _STATISTIC_LABELS[statistic], cmap=cmap,
                                    marker_size=marker_size, vmin=vmin, vmax=vmax, mask=mask, invert_y=invert_y,
-                                   output_path=output_path,
+                                   output_path=output_path, ticks=ticks,
                                    scalebar=None if scalebar_um is None else scalebar_length(analysis, scalebar_um))

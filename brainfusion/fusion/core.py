@@ -4,6 +4,7 @@ import warnings
 
 import numpy as np
 
+from brainfusion.fusion.dtw import DTW_CURVATURE
 from brainfusion.fusion.match_contours import interpolate_contour, align_contours, boundary_match_contours
 from brainfusion.fusion.average_contours import find_average_contour
 from brainfusion.fusion.transform_2Dmap import extend_grid, transform_grid2contour
@@ -15,7 +16,7 @@ from brainfusion.sample import Sample, replace
 
 
 def brain_fusion(samples: list[Sample], contour_template="average", contour_interp_n=200, clustering='Mean',
-                 outline_averaging='star_domain', smooth='auto', curvature=0.5, fit_routine='ellipse',
+                 outline_averaging='star_domain', smooth='auto', curvature=DTW_CURVATURE, fit_routine='ellipse',
                  landmark_fit='similarity', group_field=None, max_gap=None, canonical_axes=True, **kwargs) -> dict:
     """
     Align, deform and interpolate a list of samples onto a common template shape, then average them.
@@ -45,8 +46,8 @@ def brain_fusion(samples: list[Sample], contour_template="average", contour_inte
         Method used to average contours when `contour_template="average"`.
     smooth : float, 'auto' or 'weighted', default='auto'
         RBF interpolation smoothing factor for the non-rigid grid transformation.
-    curvature : float, default=0.5
-        DTW curvature-mismatch penalty used for boundary matching.
+    curvature : float, default=0.3
+        Weight of the curvature mismatch against the distance in the DTW boundary matching (independent of the unit of the outlines).
     landmark_fit : 'similarity' or 'affine', default='similarity'
         How samples with landmarks are aligned (see `match_contour_with_landmarks`). Similarity (rotation, uniform scale,
         translation) is the stable choice for round outlines and for landmarks on a line.
@@ -192,7 +193,7 @@ def _fingerprint(contours):
 
 
 def fuse_boundaries(template, samples: list[Sample], contour_interp_n=200, outline_averaging='star_domain',
-                    curvature=0.5, fit_routine='ellipse', landmark_fit='similarity', canonical_axes=True):
+                    curvature=DTW_CURVATURE, fit_routine='ellipse', landmark_fit='similarity', canonical_axes=True):
     """
     Affinely align all sample contours to a common template, then refine the match with boundary DTW.
 
@@ -386,6 +387,7 @@ def _structured_data(template_sample, measurement_samples, template_contours, tr
         'affine_matrices': [template_sample.affine] + [s.affine for s in measurement_samples],
         'scale_matrices': [template_sample.scale] + [s.scale for s in measurement_samples],
         'template_contours': template_contours,
+        'template_outline': np.asarray(template_sample.contour),   # the template itself ('template_contours': it matched to each sample)
         'measurement_contours': [s.contour for s in measurement_samples],
         'measurement_trafo_contours': trafo_contours,
         'template_grid': template_sample.grid,

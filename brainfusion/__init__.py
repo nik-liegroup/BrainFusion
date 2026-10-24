@@ -10,7 +10,7 @@ from brainfusion.correlation import (correlate_on_shared_grid, pairwise_correlat
 from brainfusion.plotting import (plot_sample_warps, plot_aligned_outlines, plot_verification_grids, plot_average_map,
                                   plot_average_statistic,
                                   plot_average_map_arrays, plot_correlation_masks, plot_correlation_with_radii,
-                                  plot_norm_corr, scalebar_length, draw_scalebar)
+                                  plot_norm_corr, scalebar_length, draw_scalebar, map_canvas, decorate_map, save_map)
 from brainfusion.io import (read_parquet_file, append_parquet_file, export_analysis, import_analysis,
                             check_parameters, parse_name, attach_metadata)
 from brainfusion.utils import mask_contour
@@ -25,8 +25,7 @@ from brainfusion.fusion import (brain_fusion, run_fusion, average_outline, fuse_
                                 list_groups, extract_groups, group_average_on_shared_grid,
                                 extract_group_native_data, merge_keys,
                                 average_repeated_outlines, average_outline_repeats, read_outline,
-                                outline_spread, read_regions_file, atlas_pullback, save_atlas_pullback,
-                                map_regions_between_outlines, region_masks)
+                                outline_spread, read_regions_file, atlas_pullback, region_masks, plot_regions)
 
 __all__ = [
     "Sample",
@@ -52,6 +51,9 @@ __all__ = [
     "plot_norm_corr",
     "scalebar_length",
     "draw_scalebar",
+    "map_canvas",
+    "decorate_map",
+    "save_map",
     "read_parquet_file",
     "export_analysis",
     "import_analysis",
@@ -104,9 +106,8 @@ __all__ = [
     "average_outline_repeats",
     "read_regions_file",
     "atlas_pullback",
-    "save_atlas_pullback",
-    "map_regions_between_outlines",
     "region_masks",
+    "plot_regions",
     "read_outline",
     "outline_spread",
 ]

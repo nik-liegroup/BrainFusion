@@ -11,4 +11,4 @@ from .interpolation import resample_points
 from .grouping import (list_groups, extract_groups, group_average_entry, group_average_on_shared_grid,
                        extract_group_native_data, merge_keys)
 from .outline_repeats import average_repeated_outlines, average_outline_repeats, read_outline, outline_spread
-from .atlas import (read_regions_file, atlas_pullback, save_atlas_pullback, map_regions_between_outlines, region_masks)
+from .atlas import read_regions_file, atlas_pullback, region_masks, plot_regions
