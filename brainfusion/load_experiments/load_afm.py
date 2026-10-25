@@ -10,7 +10,7 @@ from brainfusion.io import attach_metadata, parse_name, mirror_pixels, annotatio
 from brainfusion.load_experiments.base import iter_experiment_folders
 from brainfusion.sample import Sample
 
-# The roi-annotator's file sits next to the image it was drawn on
+# The annotation file sits next to the image it was drawn on
 AFM_ANNOTATION_DIR = os.path.join('Pics', 'calibration')
 # Images in the pixels of 'overview.tif', on which an outline may be drawn: AFM_BatchMapping.m pastes the measurement
 # images of the run onto overview.tif at their x_image/y_image (same size, same pixels), so these show the brain as it
@@ -46,7 +46,7 @@ def load_batchforce_single(folder_path, afm_variables, batchforce_filename='data
                            outline='outline_brainfusion.txt', outline_kwargs=None) -> Sample:
     """
     Load a single AFM experiment analysed with the Matlab 'batchforce' library, together with the outline (and
-    landmarks) annotated with the roi-annotator.
+    landmarks) from an annotation file.
 
     `afm_variables` is normally a list of column names to read directly out of `batchforce_filename` (one
     column per quantity). Some batchforce versions instead export a long/tidy table with one row per

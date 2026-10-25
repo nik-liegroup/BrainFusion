@@ -1,6 +1,6 @@
 """
 The look of the single map figures (average maps, group maps, GMM maps, statistic maps, difference maps ...), made to be placed as vector graphics
-into a paper figure: every one has the same size, the same line widths and the same fonts, so the files can be put side by side at one scale.
+into a multi-panel figure: every one has the same size, the same line widths and the same fonts, so the files can be put side by side at one scale.
 
   - the figure is a fixed canvas (CANVAS_MM) with a transparent background in the svg (the png is white), text stays text (Nimbus Sans, 7 pt numbers,
     9 pt label);
@@ -39,13 +39,13 @@ FONT_FAMILY = ["Nimbus Sans", "Helvetica", "Arial", "DejaVu Sans"]
 MM_PER_REFERENCE_MM = 0.39704   # the size of everything but the text (the brain is about 52 mm high); the reference drawing's numbers are 6.2197 mm high
 
 # in reference millimetres (the reference drawing, page coordinates, y downward from the top of the page)
-TILE_HEIGHT_MM = 60.0   # the canvas is as high as a tile of the paper figures (figure_style.TILE_HEIGHT_MM): the map keeps its size, the tile around it is transparent
+TILE_HEIGHT_MM = 60.0   # the canvas is as high as one tile of a multi-panel figure: the map keeps its size, the tile around it is transparent
 _REFERENCE_PAGE_HEIGHT = 131.196
 CANVAS_WIDTH_MM = 56.0
 CANVAS = (CANVAS_WIDTH_MM / MM_PER_REFERENCE_MM, TILE_HEIGHT_MM / MM_PER_REFERENCE_MM)
 _DY = (CANVAS[1] - _REFERENCE_PAGE_HEIGHT) / 2   # the reference drawing centred in the (higher) tile
 SLOT = (0.902, 0.963 + _DY, 94.613, 129.318)    # x, y (top), width, height of the box the outline's bounding box is fitted in
-WITHOUT_COLOURBAR_FRACTION = (0.902 + 94.613 + 0.9) / CANVAS[0]   # the part of the canvas's width that is left when the colourbar is hidden (figure_layout)
+WITHOUT_COLOURBAR_FRACTION = (0.902 + 94.613 + 0.9) / CANVAS[0]   # the part of the canvas's width that is left when the colourbar is hidden
 BRAIN_ALIGN = "right"   # a brain narrower than the slot: "right" = against the right edge of the slot (the colourbar is as close to every brain as to the widest one; the blank space is on the
                         # left, where a figure layout cuts it off), "centre" = in the middle of the slot (as before)
 OUTLINE_WIDTH = 2.0
@@ -154,7 +154,7 @@ def colourbar(fig, mappable, vmin, vmax, label="", ticks=None):
         height = _mm(COLOURBAR_HEIGHT)
         cax = fig.add_axes([_mm(COLOURBAR_X) / CANVAS_MM[0], (top - height) / CANVAS_MM[1], _mm(COLOURBAR_WIDTH) / CANVAS_MM[0], height / CANVAS_MM[1]])
         marks = _ticks_of(vmin, vmax, ticks)
-        cax.set_gid("colourbar")   # svg layers that figure_layout can hide (colourbar of all but one map of a row)
+        cax.set_gid("colourbar")   # svg layers that can be hidden afterwards (the colourbar of all but one map of a row)
         bar = fig.colorbar(mappable, cax=cax, ticks=marks)
         bar.ax.yaxis.set_major_formatter(_formatter(marks))
         border_pt = _mm(COLOURBAR_BORDER) * _PT_PER_MM

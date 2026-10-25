@@ -1,41 +1,36 @@
-name: Install Brainfusion Package in Virtual Conda Environment
+name: Tests
 
-on: [push]
+on: [push, pull_request]
 
 jobs:
-  build-linux:
+  test:
     runs-on: ubuntu-latest
-    strategy:
-      max-parallel: 5
+    defaults:
+      run:
+        shell: bash -el {0}
 
     steps:
     - uses: actions/checkout@v4
 
-    - name: Add conda to system path
-      run: |
-        echo $CONDA/bin >> $GITHUB_PATH
+    - name: Set up conda environment
+      uses: conda-incubator/setup-miniconda@v3
+      with:
+        environment-file: environment.yml
+        activate-environment: brainfusion-env
+        auto-activate-base: false
 
-    - name: Install dependencies
+    - name: Install the package
       run: |
-        conda env create --file environment.yml
-        source activate brainfusion-env
         pip install .
-        pip install pytest pytest-cov codecov
-
-    - name: Debug Installed Packages
-      run: |
-        source activate brainfusion-env
         pip list
 
     - name: Lint with flake8
       run: |
-        conda install flake8
         flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
         flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
 
     - name: Test with pytest and coverage
       run: |
-        source activate brainfusion-env
         pytest --cov=brainfusion --cov-report=xml
 
     - name: Upload coverage to Codecov
@@ -45,3 +40,4 @@ jobs:
         files: ./coverage.xml
         flags: unittests
         name: codecov-ubuntu
+        fail_ci_if_error: false

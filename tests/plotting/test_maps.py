@@ -4,7 +4,9 @@ matplotlib.use("Agg")
 import numpy as np
 import pytest
 import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle
 
+from brainfusion.plotting.map_style import CANVAS_MM
 from brainfusion.plotting.maps import (render_data_on_contour, get_zoom_limits, plot_contours,
                                        plot_transformed_grid, plot_average_map, plot_average_map_arrays, scalebar_length,
                                        plot_aligned_outlines, fit_markers_to_spacing)
@@ -212,8 +214,9 @@ class TestPlotAverageMap:
         analysis["measurement_metadata"] = [{"length_unit": "um"}]
         assert scalebar_length(analysis, 100) == pytest.approx(100)
         fig = plot_average_map(analysis, "value", scalebar_um=0.5)
-        bars = [line for line in fig.axes[0].lines if len(line.get_xdata()) == 2]
-        assert len(bars) == 1 and np.ptp(bars[0].get_xdata()) == pytest.approx(0.5)
+        bars = [a for a in fig.artists if isinstance(a, Rectangle)]   # the scale bar is a figure-level rectangle in figure fractions
+        assert len(bars) == 1
+        assert bars[0].get_width() * CANVAS_MM[0] == pytest.approx(0.5 * fig._mm_per_unit)
         assert not fig.axes[0].texts   # no label
         plt.close(fig)
 

@@ -1,5 +1,5 @@
 """
-Outlines drawn several times on the same image (the roi-annotator's repeated outlines, a folder such as
+Outlines drawn several times on the same image (a folder such as
 '<outline folder>/outline_repeats/' with 'outline_brainfusion_repeat<n>.txt'): their average and the drawing error -
 computed like the fusion's average outline (`average_outline`), with the same settings (`contour_interp_n`,
 `outline_averaging` of the fusion kwargs). Nothing is written: the loaders average the folder when they load it.
@@ -123,20 +123,20 @@ def average_outline_repeats(repeat_dir, fusion_kwargs=None):
 def read_outline(folder, outline, fusion_kwargs=None):
     """
     The outline of an experiment for the loaders. `outline` is a name (or path) relative to `folder`, the folder the
-    roi-annotator writes into (AFM 'Pics/calibration', Brillouin 'Plots'):
+    annotation files are in (AFM 'Pics/calibration', Brillouin 'Plots'):
       ending in '.txt'  that single outline file, e.g. 'outline_brainfusion.txt'
       otherwise         a folder of repeated outlines, e.g. 'outline_repeats', averaged (`average_outline_repeats`
                         with the outline settings of `fusion_kwargs`); a folder with a single outline gives that
                         outline as it is (nothing to average, no drawing error)
     Returns the dict of `brainfusion.io.read_annotation_file` ('header', 'outline', 'landmarks') plus 'path' and
-    'image_dir' (the folder the image named in the header is relative to: the annotator's folder for both kinds).
+    'image_dir' (the folder the image named in the header is relative to: the folder of the annotation files for both kinds).
     Raises FileNotFoundError if there is no such file or folder, ValueError if it has no outline.
     """
     path = os.path.join(folder, outline)
     if outline.lower().endswith('.txt'):
         annotation = read_annotation_file(path)
         if annotation is None:
-            raise FileNotFoundError(f"No roi-annotator file at {path}")
+            raise FileNotFoundError(f"No annotation file at {path}")
         if annotation['outline'] is None:
             raise ValueError(f"No [outline] in {path}")
         return {**annotation, 'path': path, 'image_dir': os.path.dirname(path)}

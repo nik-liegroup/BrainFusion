@@ -11,12 +11,12 @@ from brainfusion.load_experiments.base import iter_experiment_folders, list_matc
 from brainfusion.sample import Sample
 
 
-DRIFT_CORRECTED_SUFFIX = '_data_driftcorrected.csv'  # written by brillouin-drift-correction next to bmlab's '_data.csv'
+DATA_SUFFIX = '_data.csv'  # the exported data file of a repetition
 
 
 def load_brillouin_all(base_path, brillouin_variables, data_filename=None, use_landmarks=True, apply_mirror=True,
                        quality_column=None, name_pattern=None, name_converters=None,
-                       data_suffix=DRIFT_CORRECTED_SUFFIX, image_frame=False, min_depth_um=None) -> list[Sample]:
+                       data_suffix=DATA_SUFFIX, image_frame=False, min_depth_um=None) -> list[Sample]:
     """
     Load every Brillouin experiment folder (name containing '#') found directly below `base_path`.
 
@@ -38,15 +38,14 @@ def load_brillouin_all(base_path, brillouin_variables, data_filename=None, use_l
 
 def load_brillouin_experiment(folder_path, brillouin_variables, data_filename=None, use_landmarks=True,
                               apply_mirror=True, quality_column=None, outline='outline_brainfusion.txt',
-                              outline_kwargs=None, data_suffix=DRIFT_CORRECTED_SUFFIX, image_frame=False,
+                              outline_kwargs=None, data_suffix=DATA_SUFFIX, image_frame=False,
                               min_depth_um=None) -> Sample:
     """
     Load a Brillouin experiment exported by bmlab's combined-CSV exporter, together with the outline (and
-    landmarks) annotated with the roi-annotator.
+    landmarks) from an annotation file.
 
     Expects, directly below `folder_path`:
-    - 'Export/<...>_BMrep<n>_data_driftcorrected.csv' (brillouin-drift-correction's output; pass
-      `data_suffix='_data.csv'` for bmlab's uncorrected export): one row per measured grid point, with 'x'/'y'
+    - 'Export/<...>_BMrep<n>_data.csv' (a different ending can be given with `data_suffix`): one row per measured grid point, with 'x'/'y'
       stage position (um) columns plus one column per key requested in `brillouin_variables` ('#'-prefixed
       metadata lines are skipped automatically). If `data_filename` is None, the sole file in 'Export' ending in
       `data_suffix` is used (no other file is substituted); with several (one per repetition) pass the one to
@@ -55,7 +54,7 @@ def load_brillouin_experiment(folder_path, brillouin_variables, data_filename=No
       'x'/'y'), just each point's own z offset, so it rides through like any other channel.
       The CSV's 'x'/'y' must be absolute stage positions (what bmlab exports now; older exports centred them on
       the scan grid and must be exported again).
-    - 'Plots/<outline>': the roi-annotator's outline and landmarks, drawn in the pixels of the image named in its
+    - 'Plots/<outline>': the outline and landmarks, drawn in the pixels of the image named in its
       header (see `brainfusion.fusion.read_outline`): a name ending in '.txt' is that single file, any other name a
       folder of repeated outlines (e.g. 'outline_repeats'), averaged with the outline settings of `outline_kwargs`
       (the fusion kwargs). The image is found relative to 'Plots', e.g. 'Overview_BMrep0/overview_1_....tif'.
@@ -170,7 +169,7 @@ def _read_header(path):
 
 def _planes_from_depth(data, path, min_depth_um):
     """The rows of `data` whose plane lies at least `min_depth_um` below the found surface (see load_brillouin_experiment).
-    The planes of a grid column share x_orig/y_orig (drift-corrected file) or x/y; its smallest z (z counts into the sample) is plane 0."""
+    The planes of a grid column share x_orig/y_orig (if the file has these columns) or x/y; its smallest z (z counts into the sample) is plane 0."""
     header = _read_header(path)
     try:
         z_min, z_step = float(header['grid_z_min_um']), float(header['grid_z_step_um'])

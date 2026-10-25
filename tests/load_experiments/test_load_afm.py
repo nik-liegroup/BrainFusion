@@ -119,7 +119,7 @@ class TestLoadBatchforceSingle:
 
     def test_missing_annotation_raises(self, tmp_path):
         folder = make_afm_folder(tmp_path, annotate=False)
-        with pytest.raises(FileNotFoundError, match="No roi-annotator file"):
+        with pytest.raises(FileNotFoundError, match="No annotation file"):
             load_batchforce_single(str(folder), afm_variables=["modulus"])
 
     def test_missing_data_file_raises(self, tmp_path):

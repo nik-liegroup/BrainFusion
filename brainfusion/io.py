@@ -228,12 +228,12 @@ def get_roi_from_txt(roi_path, delimiter='\t', skip=0):
         return None
 
 
-ANNOTATION_FILENAME = 'outline_brainfusion.txt'  # what the roi-annotator calls its file
+ANNOTATION_FILENAME = 'outline_brainfusion.txt'  # the default name of an outline file
 
 
 def read_annotation_file(path):
     """
-    Read an outline file written by the roi-annotator: '#'-prefixed header lines ('# image: ...', '# transform:
+    Read an outline annotation file: '#'-prefixed header lines ('# image: ...', '# transform:
     ...', '# mirror_horizontal: 1', ...) followed by '[outline]' and '[landmarks]' sections of tab-separated
     'x<TAB>y' pixel coordinates (0-based, integer = pixel centre, in the un-mirrored image named in the header).
 
@@ -328,7 +328,7 @@ def parse_name(name: str, pattern: str, converters: dict = None) -> dict:
 
     Example
     -------
-        >>> parse_name("#1_XenopusExposedBrain_Control_Stage37_20260729",
+        >>> parse_name("#1_ExposedBrain_Control_Stage37_20240101",
         ...            r"#(?P<animal_number>\\d+)_.*?_(?P<condition>[A-Za-z]+)_Stage(?P<stage>\\d+)",
         ...            converters={"animal_number": int, "stage": int})
         {'animal_number': 1, 'condition': 'Control', 'stage': 37}

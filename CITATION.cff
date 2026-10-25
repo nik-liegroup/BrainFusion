@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+type: software
+title: "BrainFusion"
+abstract: >-
+  Average tissue outlines and merge spatially resolved measurements (e.g. AFM and Brillouin maps)
+  of many samples onto a common template, and correlate the resulting maps.
+authors:
+  - family-names: Gampl
+    given-names: Niklas
+version: 0.4.0
+license: MIT
+repository-code: "https://github.com/nik-liegroup/BrainFusion"
+keywords:
+  - spatial correlation
+  - tissue mechanics
+  - Brillouin microscopy
+  - atomic force microscopy
+  - image registration

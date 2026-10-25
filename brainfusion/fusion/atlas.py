@@ -4,7 +4,7 @@ is fused again.
 
     atlas_pullback(fusion_file, regions_file, drawn_on='average')
 
-reads the regions file (the roi-annotator style text file: '# key: value' header lines, one '[name]' section per region with
+reads the regions file (a text file: '# key: value' header lines, one '[name]' section per region with
 'x<TAB>y' lines; the names of the regions are the section names), and `drawn_on` says which outline of the fusion they were drawn
 on: 'average' (the fusion's template, the default) or one of its samples (its position in the fusion, or its file name). It
 
@@ -41,7 +41,7 @@ TO_METRES = {"m": 1.0, "um": 1e-6}
 
 
 def _read_sections(path):
-    """({section: [(x, y), ...]}, header {key: value}) of a roi-annotator style text file."""
+    """({section: [(x, y), ...]}, header {key: value}) of an annotation text file."""
     sections, header, points = {}, {}, None
     with open(path, encoding="utf-8") as handle:
         for line in handle:

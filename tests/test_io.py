@@ -10,7 +10,7 @@ from brainfusion.io import (parse_name, attach_metadata, check_parameters, expor
 class TestParseName:
 
     def test_extracts_named_groups_with_converters(self):
-        fields = parse_name("#1_XenopusExposedBrain_Control_Stage37_20260729",
+        fields = parse_name("#1_ExposedBrain_Control_Stage37_20240101",
                             r"#(?P<animal_number>\d+)_.*?_(?P<condition>[A-Za-z]+)_Stage(?P<stage>\d+)",
                             converters={"animal_number": int, "stage": int})
         assert fields == {"animal_number": 1, "condition": "Control", "stage": 37}

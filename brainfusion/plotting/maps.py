@@ -264,7 +264,7 @@ def plot_average_map_arrays(data_avg, grid_avg, template_contour, cbar_label='',
     `plot_average_map`, which wraps this.
 
     The figure has the look of `map_canvas` (fixed size, dotted black outline, scale bar close to the sample, colourbar with a black
-    border, transparent svg next to the png), so all maps can be placed at one scale in a paper figure.
+    border, transparent svg next to the png), so all maps can be placed at one scale in a multi-panel figure.
 
     `scalebar`: the length of a scale bar in the units of `grid_avg` (no label is written; `scalebar_length` converts
     micrometres for a fusion). `ticks`: the colourbar's ticks (default: round numbers inside the range). `title`: a title above the brain (bold, see map_style.add_title),

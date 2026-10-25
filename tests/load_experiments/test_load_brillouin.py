@@ -6,7 +6,7 @@ from PIL import Image
 from brainfusion.load_experiments.load_brillouin import load_brillouin_experiment, load_brillouin_all
 
 # Layout of an exported experiment: images with their 'TransformMatrices' folder below 'Plots/<kind>_BMrep<n>',
-# the roi-annotator's outline_brainfusion.txt in 'Plots', the data in 'Export', the raw file in 'RawData'.
+# the outline_brainfusion.txt in 'Plots', the data in 'Export', the raw file in 'RawData'.
 # The matrix is 2 px/um, so a pixel is half the stage um.
 
 
@@ -19,14 +19,14 @@ def make_brillouin_folder(base_path, name="#1_sample", grid_offset=0.0, mirror_h
 
     x = y = np.array([2.0, 4.0, 6.0]) + grid_offset  # stage x/y
     pd.DataFrame({"x": x, "y": y, "z": [0.1, 0.2, 0.3], "shift": [5.0, 5.5, 6.0],
-                  "quality_pass": [1.0, 0.0, 1.0]}).to_csv(folder / "Export" / "scan_BMrep0_data_driftcorrected.csv", index=False)
+                  "quality_pass": [1.0, 0.0, 1.0]}).to_csv(folder / "Export" / "scan_BMrep0_data.csv", index=False)
 
     if transform:
         np.savetxt(image_dir / "TransformMatrices" / "ov_transform.csv", np.diag([*matrix, 1.0]), delimiter=",")
     Image.fromarray(np.arange(100, dtype=np.uint8).reshape(10, 10)).save(image_dir / "ov.png")
     if annotate:
         (folder / "Plots" / "outline_brainfusion.txt").write_text(
-            "# roi-annotator 0.1.0\n# status: done\n# image: Overview_BMrep0/ov.png\n"
+            "# outline\n# status: done\n# image: Overview_BMrep0/ov.png\n"
             f"# mirror_horizontal: {mirror_horizontal}\n# mirror_vertical: 0\n"
             "[outline]\n0.00\t0.00\n8.00\t0.00\n8.00\t8.00\n0.00\t8.00\n[landmarks]\n1.00\t1.00\n7.00\t7.00\n")
     return folder
@@ -95,20 +95,20 @@ class TestLoadBrillouinExperiment:
 
     def test_several_data_files_need_an_explicit_choice(self, tmp_path):
         folder = make_brillouin_folder(tmp_path)
-        (folder / "Export" / "scan_BMrep1_data_driftcorrected.csv").write_text("x,y,z,shift\n2,2,0,9\n")
+        (folder / "Export" / "scan_BMrep1_data.csv").write_text("x,y,z,shift\n2,2,0,9\n")
         with pytest.raises(AssertionError, match="Expected exactly one"):
             load_brillouin_experiment(str(folder), brillouin_variables=["shift"])
         sample = load_brillouin_experiment(str(folder), brillouin_variables=["shift"],
-                                           data_filename="scan_BMrep1_data_driftcorrected.csv")
+                                           data_filename="scan_BMrep1_data.csv")
         np.testing.assert_array_equal(sample.dataset["shift"], [9.0])
 
-    def test_uncorrected_file_is_never_substituted(self, tmp_path):
+    def test_a_file_with_another_ending_is_never_substituted(self, tmp_path):
         folder = make_brillouin_folder(tmp_path)
         export = folder / "Export"
-        (export / "scan_BMrep0_data_driftcorrected.csv").rename(export / "scan_BMrep0_data.csv")
+        (export / "scan_BMrep0_data.csv").rename(export / "scan_BMrep0_data_other.csv")
         with pytest.raises(AssertionError, match="Expected exactly one"):
             load_brillouin_experiment(str(folder), brillouin_variables=["shift"])
-        sample = load_brillouin_experiment(str(folder), brillouin_variables=["shift"], data_suffix="_data.csv")
+        sample = load_brillouin_experiment(str(folder), brillouin_variables=["shift"], data_suffix="_data_other.csv")
         np.testing.assert_array_equal(sample.dataset["shift"], [5.0, 5.5, 6.0])
 
     def test_another_annotation_file_can_be_given(self, tmp_path):
@@ -134,7 +134,7 @@ class TestLoadBrillouinExperiment:
 
     def test_missing_annotation_raises(self, tmp_path):
         folder = make_brillouin_folder(tmp_path, annotate=False)
-        with pytest.raises(FileNotFoundError, match="No roi-annotator file"):
+        with pytest.raises(FileNotFoundError, match="No annotation file"):
             load_brillouin_experiment(str(folder), brillouin_variables=["shift"])
 
     def write_stack(self, folder, header):
@@ -143,7 +143,7 @@ class TestLoadBrillouinExperiment:
                 for plane, z in enumerate([0.0, 1.0, 2.0, 3.0])]
         text = "".join(f"#{line}\n" for line in header) + "x,y,z,shift,quality_pass\n" + "".join(
             ",".join(map(str, row)) + "\n" for row in rows)
-        (folder / "Export" / "scan_BMrep0_data_driftcorrected.csv").write_text(text)
+        (folder / "Export" / "scan_BMrep0_data.csv").write_text(text)
 
     def test_min_depth_keeps_the_planes_below_the_surface(self, tmp_path):
         folder = make_brillouin_folder(tmp_path)

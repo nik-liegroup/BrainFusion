@@ -42,7 +42,7 @@ def region_in_template(template, dy=0.2):
 
 def test_the_regions_file_names_the_regions_itself(tmp_path):
     (tmp_path / "regions_brainfusion.txt").write_text(
-        "# roi-annotator 0.1.0\n# status: drawn\n# frame: x\n[Alpha]\n0\t0\n10\t0\n10\t10\n0\t0\n[Beta two]\n1\t1\n2\t1\n2\t2\n", encoding="utf-8")
+        "# regions\n# status: drawn\n# frame: x\n[Alpha]\n0\t0\n10\t0\n10\t10\n0\t0\n[Beta two]\n1\t1\n2\t1\n2\t2\n", encoding="utf-8")
     regions, header = read_regions_file(tmp_path / "regions_brainfusion.txt", scale=1e-6)
     assert list(regions) == ["Alpha", "Beta two"] and header["status"] == "drawn"
     np.testing.assert_allclose(regions["Alpha"], np.array([[0, 0], [10, 0], [10, 10]]) * 1e-6)   # the repeated first point dropped
