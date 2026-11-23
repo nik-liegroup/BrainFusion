@@ -20,7 +20,8 @@ This makes spatial cross-correlations of any arbitrary measurement signal easily
 2. [Usage](#usage)
 3. [Functionality](#functionality)
 4. [Contributing](#contributing)
-5. [License](#license)
+5. [Citation](#citation)
+6. [License](#license)
 
 ## Installation
 1. Clone the Repository:
@@ -105,6 +106,14 @@ Statistics are a separate step on top of a finished fusion; they never change it
 ## Contributing
 Contributions are welcome! Please feel free to submit a pull request or open an issue for any improvements or suggestions.
 
+
+## Citation
+
+If you use BrainFusion, please cite its Zenodo record (see `CITATION.cff`).
+
+<!-- DOI badge placeholder: after the first Zenodo release replace XXXXXXX with the record number, uncomment the line below and remove this note.
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.XXXXXXX.svg)](https://doi.org/10.5281/zenodo.XXXXXXX)
+-->
 
 ## License
 This project is licensed under the MIT License - see the LICENSE file for details.

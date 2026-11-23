@@ -1,0 +1,11 @@
+{
+  "upload_type": "software",
+  "access_right": "open",
+  "license": "mit",
+  "title": "BrainFusion",
+  "description": "<p>Python package that averages tissue outlines and merges spatially resolved measurements (e.g. AFM and Brillouin maps) of many samples onto a common template, and correlates the resulting maps.</p>",
+  "creators": [
+    {"name": "Gampl, Niklas"}
+  ],
+  "keywords": ["spatial correlation", "tissue mechanics", "Brillouin microscopy", "atomic force microscopy", "image registration"]
+}
